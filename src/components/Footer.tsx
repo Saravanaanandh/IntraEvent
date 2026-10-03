@@ -3,7 +3,7 @@ import { Scale, Zap, Search, ShieldCheck, Trophy } from 'lucide-react';
 export default function Footer() {
   return (
     <footer className="border-t border-[#4a3670]/60 bg-[#0a0614]/90 py-10 mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid md:grid-cols-4 gap-8">
+      {/* <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid md:grid-cols-4 gap-8">
         <div>
           <div className="flex items-center gap-2">
             <span className="bg-gradient-to-tr from-violet-600 via-fuchsia-500 to-amber-400 p-0.5 rounded-[10px]">
@@ -44,7 +44,7 @@ export default function Footer() {
             <span>One final score out of 100 ·<br />declared by the tribunal only</span>
           </p>
         </div>
-      </div>
+      </div> */}
       <p className="text-center text-[11px] font-mono text-[#5f5585] border-t border-[#4a3670]/40 mt-8 pt-4">
         MIDNIGHT TRIBUNAL · Case File #2026-FE · Collegiate Arena
       </p>
