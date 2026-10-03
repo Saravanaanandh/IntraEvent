@@ -141,7 +141,7 @@ export default function App() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
                   {[
                     { icon: ImageIcon, tint: 'text-amber-200 border-amber-300/30 bg-amber-400/5', label: '1 IMAGE', sub: 'the visual truth' },
-                    { icon: MessagesSquare, tint: 'text-fuchsia-300 border-fuchsia-400/30 bg-fuchsia-400/5', label: '30 MIN', sub: 'open chat, min 7' },
+                    { icon: MessagesSquare, tint: 'text-fuchsia-300 border-fuchsia-400/30 bg-fuchsia-400/5', label: '30 MIN', sub: 'open chat' },
                     { icon: Search, tint: 'text-emerald-300 border-emerald-400/30 bg-emerald-400/5', label: '4 SUSPECTS', sub: 'forensic clues' },
                     { icon: Award, tint: 'text-violet-300 border-violet-400/30 bg-violet-400/5', label: '100 POINTS', sub: 'one final verdict' },
                   ].map((p) => {

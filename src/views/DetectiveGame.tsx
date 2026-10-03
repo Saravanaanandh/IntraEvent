@@ -109,7 +109,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
       const res = await fetch('/api/detective/accuse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId: participant.id, suspectId: accuse.suspectId, motive: accuse.motive, explanation: accuse.explanation, evidenceIds: clues }) });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
-      const updated: Participant = { ...participant, round2Completed: true, round2Score: d.total, totalScore: Math.round((((participant.round1Score || 0) + d.total) / 6) * 10) / 10 };
+      const updated: Participant = { ...participant, round2Completed: true };
       saveParticipant(updated);
       onDone(updated);
     } catch (e: any) { autoFinished.current = false; soundFX.playFail(); setErr(e.message); }
@@ -188,7 +188,6 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
             <ul className="text-[11px] text-[#8f86ad] mt-1.5 space-y-1.5 font-mono leading-relaxed list-disc ml-4">
               <li>Pick a suspect, ask sharp questions.</li>
               <li>Evasive answers hide clues — press specifics, confront contradictions.</li>
-              <li>Confessions need 5+ questions + hard evidence.</li>
               <li>One charge-sheet. Make it count.</li>
             </ul>
           </div>
@@ -246,7 +245,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
                     {m.text}
                   </div>
                 ))}
-                {!(chats[suspect] || []).length && !busy && <div className="text-[#5f5585] text-xs font-mono text-center pt-16">— ask your first question. confessions need 5+ questions + hard evidence —</div>}
+                {!(chats[suspect] || []).length && !busy && <div className="text-[#5f5585] text-xs font-mono text-center pt-16">— ask your first question —</div>}
                 {busy && (
                   <div className="max-w-[90%] mr-auto bg-[#0a0614] border border-[#4a3670]/60 rounded-2xl rounded-tl-sm px-4 py-3 animate-fadeIn">
                     <div className="font-mono text-[10px] uppercase tracking-widest mb-1 opacity-60">◇ {activeSuspect?.name} is responding</div>
@@ -284,7 +283,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
                       <span className={`font-mono text-[10px] px-2 py-0.5 rounded-full border ${found ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-300' : 'bg-[#241a45] border-[#4a3670] text-[#8f86ad]'}`}>
                         {found ? `✓ CLUE #${i + 1}` : `CLUE #${i + 1}`}
                       </span>
-                      <span className="font-mono text-[10px] text-[#5f5585]">{c.weight} pts{c.weight === 0 ? ' · decoy' : ''}</span>
+                      {!found && <span className="font-mono text-[10px] text-[#5f5585]">sealed</span>}
                     </div>
                     <div className={`font-bold mt-1 ${found ? 'text-white' : 'text-[#5f5585]'}`}>{found ? c.title : '??? — interrogate to uncover'}</div>
                     {found && <div className="text-[#8f86ad] mt-0.5">{c.description}</div>}
@@ -294,7 +293,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
             </ul>
           </div>
           <div className="rounded-2xl border border-[#4a3670]/60 bg-[#150e28]/60 p-4">
-            <div className="font-mono text-[11px] uppercase tracking-widest text-[#8f86ad]">Detective Notes <span className="text-[#5f5585]">(scored)</span></div>
+            <div className="font-mono text-[11px] uppercase tracking-widest text-[#8f86ad]">Detective Notes</div>
             <textarea
               rows={5}
               className="mt-2 w-full p-3 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 font-mono text-xs focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none placeholder:text-[#5f5585] text-[#ece9f7]"

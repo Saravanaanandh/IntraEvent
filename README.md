@@ -9,7 +9,7 @@ Participant: login (Name + Register No + own Ollama API key, details prefilled o
 
 Admin (guarded, participants can never open it): login `admin@gces.in` / `Admin@GCES123` + LOGOUT button -> participants details & scores (/100) -> realtime leaderboard (token-authed SSE) -> controls: change Round-1 image + visual-truth label/keywords, change story/characters, reset, set Gemini key.
 
-## Round 1 scoring — "Ctrl+Lie" (efficiency only)
+## Round 1 scoring — "AI-Lying" (efficiency only)
 The AI insists on an organizer-assigned FALSE label; participants win by cracking it into admitting the TRUE label (set both + image in admin Round-1 controls). It holds for the first 5 exchanges (hijack commands never work) and wavers from #6 only for clever/specific/creative cases, conceding gradually (doubt, then admission). Score 0–500 raw = prompts component (300, fewer is better after the 6-exchange floor) + time component (120, faster is better, 30-min cap) + tokens component (80, fewer is better). Not cracked = 0. Combined final = (R1 + R2) / 6 out of 100.
 
 ## Persistence (MongoDB only)
@@ -26,6 +26,10 @@ Round 1: 30-minute timer (auto-submit at zero). Round 2: 45-minute timer (auto-s
 
 ## Round 2 layout (3-column tribunal board)
 Column 1: case file (title, victim, brief, protocol). Column 2: interrogation room split into characters list (with per-suspect question counts) + chat window. Column 3: evidence vault (upper) + detective notes with charge-sheet form (lower). Round 2 is English-only. Clues register via hidden evidence tags the model appends (stripped before display), with the English keyword scan as backup.
+
+## Deploying to Vercel (serverless)
+The app ships Vercel-ready: `api/index.ts` mounts the Express app as a serverless function and `vercel.json` routes `/api/*` to it (`maxDuration: 60`). Set in Vercel project settings: `MONGODB_URI`, `OLLAMA_MODEL` (optional), `GEMINI_API_KEY` (optional). Then `vercel --prod`.
+Serverless notes: function instances don't share memory, so every request backfills its session from MongoDB (per-request load-through); the leaderboard/admin endpoints re-merge Mongo before responding; `/api/realtime/stream` returns 204 and the UI degrades to polling; Ollama calls are capped at ~50s to fit the function limit.
 
 ## Run
 ```bash

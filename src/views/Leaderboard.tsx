@@ -19,6 +19,8 @@ export default function Leaderboard({ live = false, token = '' }: { live?: boole
     es.addEventListener('leaderboard_updated', (e: any) => {
       try { setRows(JSON.parse(e.data).leaderboard || []); } catch { /* keep polling copy */ }
     });
+    // Serverless hosts can't hold SSE streams — close on any error and rely on polling.
+    es.onerror = () => { try { es.close(); } catch { /* ignore */ } };
     const t = setInterval(load, 3000);
     return () => { es.close(); clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

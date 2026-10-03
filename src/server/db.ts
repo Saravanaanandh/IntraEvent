@@ -33,28 +33,35 @@ export function isMongoUp(): boolean {
   return connected;
 }
 
-export async function connectMongo(): Promise<boolean> {
+// Cached connection: on serverless (Vercel), warm invocations reuse it
+// instead of opening a new connection per request.
+let connectPromise: Promise<boolean> | null = null;
+
+export function connectMongo(): Promise<boolean> {
+  if (connected) return Promise.resolve(true);
+  if (!connectPromise) connectPromise = doConnect().catch(() => false);
+  return connectPromise;
+}
+
+async function doConnect(): Promise<boolean> {
   const mongoUrl = mongoUri();
   if (!mongoUrl) {
-    console.warn('[mongo] MONGODB_URI not set — running IN-MEMORY ONLY (data will be lost on restart).');
+    console.warn('[mongo] MONGODB_URI not set - running IN-MEMORY ONLY (data will be lost on restart).');
+    connectPromise = null;
     return false;
   }
-  if (connected) return true;
-  if (connectAttempted && mongoose.connection.readyState !== 1) {
-    // retry once per boot sequence call
-  }
-  connectAttempted = true;
   try {
     await mongoose.connect(mongoUrl, {
       dbName: 'finalevent',
       serverSelectionTimeoutMS: 8000,
     });
     connected = true;
-    console.log('[mongo] connected — the ONLY store (users + conversations + config).');
+    console.log('[mongo] connected - the ONLY store (users + conversations + config).');
     return true;
   } catch (e: any) {
-    console.warn('[mongo] connection failed — running IN-MEMORY ONLY:', String(e?.message || e).slice(0, 200));
+    console.warn('[mongo] connection failed - running IN-MEMORY ONLY:', String(e?.message || e).slice(0, 200));
     connected = false;
+    connectPromise = null;
     return false;
   }
 }
@@ -117,4 +124,38 @@ export async function loadAllFromMongo(): Promise<{
     console.warn('[mongo] hydrate failed:', String(e?.message || e).slice(0, 150));
     return null;
   }
+}
+
+// Single-doc loaders for serverless load-through: one request may land on a
+// warm instance that never saw this participant's session in memory.
+async function findDoc(model: mongoose.Model<any>, pid: string): Promise<any | null> {
+  if (!connected) return null;
+  try {
+    const d = await model.findOne({ pid }).lean().exec();
+    return (d as any)?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function loadParticipantDoc(pid: string): Promise<Participant | null> {
+  return findDoc(ParticipantDoc, pid) as Promise<Participant | null>;
+}
+
+export async function loadParticipantByRegNo(registerNo: string): Promise<Participant | null> {
+  if (!connected) return null;
+  try {
+    const d = await ParticipantDoc.findOne({ 'data.registerNo': registerNo }).lean().exec();
+    return ((d as any)?.data as Participant) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function loadLieDoc(pid: string): Promise<any | null> {
+  return findDoc(LieSessionDoc, pid);
+}
+
+export function loadDetDoc(pid: string): Promise<any | null> {
+  return findDoc(DetSessionDoc, pid);
 }

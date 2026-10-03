@@ -39,6 +39,8 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     const es = new EventSource(`/api/realtime/stream?token=${encodeURIComponent(token)}`);
     es.addEventListener('leaderboard_updated', load);
     es.addEventListener('players_updated', load);
+    // Serverless hosts can't hold SSE streams — close on any error and rely on polling.
+    es.onerror = () => { try { es.close(); } catch { /* ignore */ } };
     const t = setInterval(load, 4000);
     return () => { es.close(); clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

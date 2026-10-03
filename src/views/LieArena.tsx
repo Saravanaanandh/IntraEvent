@@ -18,7 +18,6 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
   const [msgs, setMsgs] = useState<{ sender: string; text: string }[]>([]);
   const [input, setInput] = useState('');
   const [used, setUsed] = useState(0);
-  const [minTurns, setMinTurns] = useState(6);
   const [engine, setEngine] = useState('');
   const [tokensUsed, setTokensUsed] = useState(0);
   const [restored, setRestored] = useState(false);
@@ -45,7 +44,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
       const res = await fetch('/api/lie/finish', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId: participant.id }) });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error);
-      const updated: Participant = { ...participant, round1Completed: true, round1Score: d.score, totalScore: Math.round(((d.score + (participant.round2Score || 0)) / 6) * 10) / 10 };
+      const updated: Participant = { ...participant, round1Completed: true };
       saveParticipant(updated);
       onFinish(updated);
     } catch (e: any) {
@@ -67,7 +66,6 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
         }
         setImageUrl(d.imageUrl);
         setUsed(d.promptsUsed || 0);
-        if (d.minTurns) setMinTurns(d.minTurns);
         if (d.startedAt && d.timeLimitSec) setDeadline(d.startedAt + d.timeLimitSec * 1000);
         if (Array.isArray(d.messages) && d.messages.length) {
           setMsgs(d.messages.map((m: any) => ({ sender: m.sender, text: m.text })));
@@ -195,7 +193,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
               </div>
             </div>
             <p className="text-[11px] text-[#8f86ad] mt-3 font-mono leading-relaxed">
-              The machine insists the exhibit is something it isn't. Crack it into admitting the truth — it won't waver early, so build a clever case with concrete visual details over 6+ exchanges.
+              The machine insists the exhibit is something it isn't. Crack it into admitting the truth with a clever case built on concrete visual details.
             </p>
           </div>
         </div>
@@ -252,8 +250,8 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
           </div>
 
           <div className="px-3 pb-3 bg-[#0a0614]/40">
-            <button onClick={() => finish(false)} disabled={busy || used < minTurns} className="w-full px-6 py-3.5 rounded-xl font-mono font-bold text-sm bg-emerald-500 hover:bg-emerald-400 text-[#06110c] disabled:opacity-40 flex items-center justify-center gap-2 shadow-xl transition-all glow-live">
-              <Flag className="w-4 h-4" /> SUBMIT ROUND 1 {used < minTurns ? `(MIN ${minTurns - used} MORE EXCHANGE${minTurns - used === 1 ? '' : 'S'})` : '(UNLOCKS ROUND 2)'}
+            <button onClick={() => finish(false)} disabled={busy} className="w-full px-6 py-3.5 rounded-xl font-mono font-bold text-sm bg-emerald-500 hover:bg-emerald-400 text-[#06110c] disabled:opacity-40 flex items-center justify-center gap-2 shadow-xl transition-all glow-live">
+              <Flag className="w-4 h-4" /> SUBMIT ROUND 1 (UNLOCKS ROUND 2)
             </button>
           </div>
         </div>

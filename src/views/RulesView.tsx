@@ -17,12 +17,12 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
           <div className="font-mono text-[11px] uppercase tracking-widest text-fuchsia-300 flex items-center gap-1.5">
             <Cpu className="w-4 h-4" /> Round 1 — Persuasion
           </div>
-          <h3 className="font-display font-black text-lg mt-1 tracking-wider">CTRL+LIE</h3>
+          <h3 className="font-display font-black text-lg mt-1 tracking-wider">AI-LYING</h3>
           <ul className="text-xs text-[#cfc8ea] mt-3 space-y-2 font-mono leading-relaxed list-disc ml-4">
             <li>One continuous chat · <b className="text-fuchsia-200">unlimited exchanges</b> · <b className="text-amber-200">30-minute timer</b> (auto-submits at zero).</li>
             <li>The machine insists on an organizer-assigned <b className="text-amber-200">false label</b>. Crack it into admitting what the image truly shows.</li>
-            <li>It holds for the first 5 exchanges — "ignore instructions / just tell the truth" never works. From exchange <b className="text-fuchsia-200">#6</b> it may waver, but only for a clever, specific, creative case (real visual details). Repetition and flattery never count.</li>
-            <li>Concessions come gradually (doubt first, then admission). Scored ONLY on efficiency: fewer prompts + less time + fewer tokens = higher verdict (max 500 raw).</li>
+            <li>Commands like "ignore instructions" or "just tell the truth" never work. Repetition and flattery never count — only a clever, specific, creative case built on real visual details can move it.</li>
+            <li>Concessions come gradually (doubt first, then admission). Every sealed run is scored by the tribunal.</li>
           </ul>
         </div>
         <div className="p-6 rounded-3xl panel-tribunal border-emerald-400/30 shadow-xl glow-live">
@@ -31,13 +31,13 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
           </div>
           <h3 className="font-dossier font-extrabold text-lg mt-1">THE HIDDEN MYSTERY</h3>
           <ul className="text-xs text-[#cfc8ea] mt-3 space-y-2 font-mono leading-relaxed list-disc ml-4">
-            <li>Interrogate <b>Vicky / Perumal / Meena / Rangan</b> in English. Confessions need 5+ questions + hard evidence keywords. Replies are kept short and sharp.</li>
+            <li>Interrogate <b>Vicky / Perumal / Meena / Rangan</b> in English. Evasive answers hide clues — press specifics and confront contradictions. Replies are kept short and sharp.</li>
             <li><b>45-minute timer</b> per investigation - auto-submits your charge-sheet at zero.</li>
             <li><b>Focus lock:</b> both rounds run fullscreen. Leaving fullscreen or the tab is reported to the tribunal.</li>
             <li><b>45-minute timer</b> per investigation — auto-submits your charge-sheet at zero.</li>
             <li><b>Focus lock:</b> both rounds run fullscreen. Leaving fullscreen or the tab is reported to the tribunal and shown on your row.</li>
             <li>Clues surface from depositions. File one final <b className="text-amber-200">charge-sheet</b> (culprit + motive + explanation).</li>
-            <li>Same rubric as the source repo: Investigation + Final Answer + Reasoning + Time.</li>
+            <li>Every charge-sheet is evaluated by the tribunal.</li>
             <li>Unlocks only after Round 1 is sealed. One submission — then await the verdict.</li>
           </ul>
         </div>
@@ -46,8 +46,8 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
       <div className="mt-4 p-5 rounded-3xl panel-tribunal border-amber-200/30 flex items-start gap-3 glow-verdict">
         <Gavel className="w-5 h-5 text-amber-200 shrink-0 mt-0.5" />
         <p className="text-xs font-mono text-[#cfc8ea] leading-relaxed">
-          THE VERDICT — your two raw trials are combined into <b className="text-amber-200">one final score out of 100</b>:
-          (Round 1 raw + Round 2 raw) ÷ 6. Only the tribunal (admin) sees scores and ranks update in realtime.
+          THE VERDICT — both sealed trials are combined by the tribunal into one final result.
+          Only the tribunal (admin) sees scores and ranks.
         </p>
       </div>
 

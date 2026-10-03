@@ -35,8 +35,8 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
               ? <span className="font-mono text-[10px] px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-400/40 text-emerald-300 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> SEALED</span>
               : <span className="font-mono text-[10px] px-2 py-1 rounded-full bg-[#0a0614] border border-fuchsia-400/40 text-amber-200">● OPEN</span>}
           </div>
-          <h3 className="font-display font-black text-xl mt-2 tracking-wider">CTRL+LIE</h3>
-          <p className="text-xs text-[#8f86ad] mt-1 font-mono leading-relaxed">Chat freely (min 6 exchanges) within 30 minutes. The machine insists on a false label — crack it into admitting the truth.</p>
+          <h3 className="font-display font-black text-xl mt-2 tracking-wider">AI-LYING</h3>
+          <p className="text-xs text-[#8f86ad] mt-1 font-mono leading-relaxed">Chat freely within the time. The machine insists on a false label — crack it into admitting the truth.</p>
           <button onClick={() => { soundFX.playClick(); onStartLie(); }} disabled={r1} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm flex items-center justify-center gap-2 transform hover:-translate-y-0.5 ${r1 ? 'bg-[#241a45] text-[#5f5585] cursor-not-allowed' : 'btn-tribunal'}`}>
             {r1 ? 'SEALED ✓' : <><Zap className="w-4 h-4" /> START ROUND 1</>}
           </button>

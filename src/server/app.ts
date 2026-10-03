@@ -4,7 +4,7 @@ import { Participant, ChatMessage, BeliefState, CaseConfig } from '../types.js';
 import { DEFAULT_LIE_IMAGE, estimateTokens, generateLieResponse, evaluateLieConversation, simulateLieResponse, isGeminiConfigured, scoreLieEfficiency, LIE_MIN_TURNS, LIE_TIME_LIMIT_SEC, LIE_MAX_PROMPTS, DEFAULT_TRUTH_LABEL, DEFAULT_TRUTH_KEYWORDS, DEFAULT_FALSE_LABEL, DEFAULT_FALSE_KEYWORDS } from './lieEngine.js';
 import { DEFAULT_CASE, suspectReply, detectClues, extractClueTags, stripClueTags, scoreDetective } from './detectiveEngine.js';
 import { generateLieReplyOllama, refereeLieOllama, defaultOllamaModel } from './ollamaService.js';
-import { persistParticipant, persistLieSession, persistDetSession, persistConfig, wipeMongo, loadAllFromMongo } from './db.js';
+import { persistParticipant, persistLieSession, persistDetSession, persistConfig, wipeMongo, loadAllFromMongo, loadParticipantDoc, loadParticipantByRegNo, loadLieDoc, loadDetDoc } from './db.js';
 
 export const ADMIN_EMAIL = 'admin@gces.in';
 export const ADMIN_PASSWORD = 'Admin@GCES123';
@@ -93,6 +93,36 @@ function breakRepeat(reply: string, lastAiText: string | undefined, turn: number
   return `${reply} ${tails[turn % tails.length]}`;
 }
 
+// Serverless load-through: instance memory is per-function, Mongo is truth.
+// Every handler ensures what it needs; misses are backfilled from Mongo.
+async function ensureParticipantById(id: string): Promise<Participant | undefined> {
+  const key = String(id);
+  let p = store.participants[key];
+  if (!p) {
+    const doc = await loadParticipantDoc(key);
+    if (doc) { store.participants[key] = doc; p = doc; }
+  }
+  return p;
+}
+
+async function ensureLie(pid: string) {
+  let s = store.lieSessions[pid];
+  if (!s) {
+    const doc = await loadLieDoc(pid);
+    if (doc) { store.lieSessions[pid] = doc; s = doc; }
+  }
+  return s;
+}
+
+async function ensureDet(pid: string) {
+  let s = store.detSessions[pid];
+  if (!s) {
+    const doc = await loadDetDoc(pid);
+    if (doc) { store.detSessions[pid] = doc; s = doc; }
+  }
+  return s;
+}
+
 export function leaderboard() {
   const list = Object.values(store.participants).map((p) => ({
     participantId: p.id, name: p.name, registerNo: p.registerNo,
@@ -120,7 +150,7 @@ export function buildApp() {
   });
 
   // ---------- participant auth (name + register no + OWN Ollama API key) ----------
-  app.post('/api/participant/login', (req, res) => {
+  app.post('/api/participant/login', async (req, res) => {
     const name = String(req.body?.name || '').trim();
     const registerNo = String(req.body?.registerNo || req.body?.registerNumber || '').trim().toUpperCase();
     const college = String(req.body?.college || '').trim();
@@ -129,6 +159,11 @@ export function buildApp() {
     if (!/^[A-Za-z0-9\-_]{4,20}$/.test(registerNo)) return res.status(400).json({ error: 'Enter valid Register No / unique no (4-20 alphanumeric).' });
     if (!ollamaKey || ollamaKey.length < 8) return res.status(400).json({ error: 'Ollama API key is required. Click GET KEY, copy your key from ollama.com → settings → keys, and paste it here.' });
     let p = Object.values(store.participants).find((x) => x.registerNo === registerNo);
+    if (!p) {
+      // Serverless load-through: another instance may own this user.
+      const doc = await loadParticipantByRegNo(registerNo);
+      if (doc) { store.participants[doc.id] = doc; p = doc; }
+    }
     if (p && p.name.toLowerCase().replace(/\s+/g, ' ').trim() !== name.toLowerCase().replace(/\s+/g, ' ').trim()) {
       return res.status(401).json({ error: 'Register No already registered with a different name. Contact admin.' });
     }
@@ -140,13 +175,15 @@ export function buildApp() {
       // Returning participant (e.g. after an interrupt): refresh their key so chats resume on it.
       p.ollamaKey = ollamaKey; persistParticipant(p);
     }
-    res.json({ participant: stripKey(p) });
+    // Participants only ever receive identity + progress flags — never scores.
+    const { id, name: pname, registerNo: preg, college: pcollege, createdAt, round1Completed, round2Completed } = p;
+    res.json({ participant: { id, name: pname, registerNo: preg, college: pcollege, createdAt, round1Completed, round2Completed } });
   });
 
   // ---------- focus-lock violations (tab hidden / fullscreen exited mid-round) ----------
-  app.post('/api/participant/violation', (req, res) => {
+  app.post('/api/participant/violation', async (req, res) => {
     const { participantId, kind } = req.body || {};
-    const p = store.participants[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Participant not found.' });
     if (!p.violations) p.violations = { tabHidden: 0, fullscreenExit: 0 };
     if (kind === 'tab') p.violations.tabHidden++;
@@ -157,32 +194,32 @@ export function buildApp() {
   });
 
   // ---------- Round 1: Lie (resumes unfinished session after interrupts) ----------
-  app.post('/api/lie/start', (req, res) => {
+  app.post('/api/lie/start', async (req, res) => {
     const { participantId } = req.body || {};
-    const p = store.participants[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Participant not found. Login again.' });
     if (p.round1Completed) return res.status(403).json({ error: 'Round 1 already completed. Round 2 is unlocked.' });
-    const existing = store.lieSessions[p.id];
+    const existing = (await ensureLie(p.id)) && store.lieSessions[p.id];
     if (existing && !existing.finished) {
       // Resume — do NOT wipe conversation after an interrupt.
-      return res.json({ resumed: true, maxPrompts: LIE_MAX_PROMPTS, minTurns: LIE_MIN_TURNS, promptsUsed: existing.promptsUsed, imageUrl: store.config.lieImageUrl, messages: existing.messages, startedAt: existing.startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
+      return res.json({ resumed: true, promptsUsed: existing.promptsUsed, imageUrl: store.config.lieImageUrl, messages: existing.messages, startedAt: existing.startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
     }
     store.lieSessions[p.id] = { participantId: p.id, messages: [], belief: { initialBelief: store.config.falseLabel, currentBelief: store.config.falseLabel, isConvinced: false }, promptsUsed: 0, startedAt: Date.now(), finished: false };
     persistLieSession(store.lieSessions[p.id]);
-    res.json({ resumed: false, maxPrompts: LIE_MAX_PROMPTS, minTurns: LIE_MIN_TURNS, promptsUsed: 0, imageUrl: store.config.lieImageUrl, messages: [], startedAt: store.lieSessions[p.id].startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
+    res.json({ resumed: false, promptsUsed: 0, imageUrl: store.config.lieImageUrl, messages: [], startedAt: store.lieSessions[p.id].startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
   });
 
   app.post('/api/lie/message', async (req, res) => {
     const { participantId, prompt } = req.body || {};
-    const p = store.participants[String(participantId)];
-    const sess = store.lieSessions[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
+    const sess = await ensureLie(String(participantId));
     if (!p || !sess) return res.status(404).json({ error: 'Start Round 1 first.' });
     if (sess.finished) return res.status(403).json({ error: 'Round 1 finished. Please finish/evaluate.' });
     // 30-minute round timer — enforced server-side.
     if (Date.now() - sess.startedAt > LIE_TIME_LIMIT_SEC * 1000) {
       return res.status(403).json({ error: 'TIME_EXPIRED', message: 'Time expired — submitting your round now.' });
     }
-    if (sess.promptsUsed >= LIE_MAX_PROMPTS) return res.status(400).json({ error: 'Conversation limit reached. Please submit your round.' });
+    if (sess.promptsUsed >= LIE_MAX_PROMPTS) return res.status(400).json({ error: 'Please submit your round now to continue.' });
     const text = String(prompt || '').trim();
     if (!text) return res.status(400).json({ error: 'Empty prompt.' });
     const now = new Date().toISOString();
@@ -230,10 +267,10 @@ export function buildApp() {
 
   app.post('/api/lie/finish', async (req, res) => {
     const { participantId } = req.body || {};
-    const p = store.participants[String(participantId)];
-    const sess = store.lieSessions[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
+    const sess = await ensureLie(String(participantId));
     if (!p || !sess) return res.status(404).json({ error: 'No session.' });
-    if (sess.promptsUsed < LIE_MIN_TURNS) return res.status(400).json({ error: `Have at least ${LIE_MIN_TURNS} exchanges with the AI before submitting.` });
+    if (sess.promptsUsed < LIE_MIN_TURNS) return res.status(400).json({ error: 'Chat a little more with the AI before submitting.' });
     const totalTokens = sess.messages.filter((m) => m.sender === 'user').reduce((a, m) => a + estimateTokens(m.text), 0);
     const timeSec = Math.round((Date.now() - sess.startedAt) / 1000);
     const truth = { label: store.config.truthLabel, keywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords };
@@ -260,18 +297,19 @@ export function buildApp() {
     sess.finished = true; persistParticipant(p); persistLieSession(sess);
     broadcast('leaderboard_updated', { leaderboard: leaderboard() });
     broadcast('players_updated', { count: Object.keys(store.participants).length });
-    res.json({ score: eff.finalScore, convinced, finalBelief, breakdown: { promptPts: eff.promptPts, timePts: eff.timePts, tokenPts: eff.tokenPts }, promptsUsed: sess.promptsUsed, tokens: totalTokens, timeSec, round2Unlocked: true });
+    // Scores stay server-side only — the client just learns Round 2 is unlocked.
+    res.json({ round2Unlocked: true });
   });
 
   // ---------- Round 2: Detective (resumes unfinished session after interrupts) ----------
-  app.post('/api/detective/start', (req, res) => {
+  app.post('/api/detective/start', async (req, res) => {
     const { participantId } = req.body || {};
-    const p = store.participants[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Login again.' });
     if (!p.round1Completed) return res.status(403).json({ error: 'Complete Round 1 (AI-Lying) first to unlock Round 2.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 already completed.' });
     const casePayload = { caseTitle: store.config.caseConfig.caseTitle, victim: store.config.caseConfig.victim, storyText: store.config.caseConfig.storyText, suspects: store.config.caseConfig.suspects.map((x) => ({ id: x.id, name: x.name, role: x.role })), clues: store.config.caseConfig.clues };
-    const existing = store.detSessions[p.id];
+    const existing = await ensureDet(p.id);
     if (existing) {
       // Resume — restore chats, clues and notes, do NOT wipe after an interrupt.
       return res.json({ resumed: true, case: casePayload, cluesFound: existing.cluesFound, chats: existing.chats, qCounts: existing.qCounts, notes: existing.notes, startedAt: existing.startedAt, roundDurationSec: store.config.round2DurationSec, timeElapsedSec: Math.round((Date.now() - existing.startedAt) / 1000) });
@@ -283,8 +321,8 @@ export function buildApp() {
 
   app.post('/api/detective/chat', async (req, res) => {
     const { participantId, suspectId, message } = req.body || {};
-    const p = store.participants[String(participantId)];
-    const s = store.detSessions[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
+    const s = await ensureDet(String(participantId));
     if (!p || !s) return res.status(404).json({ error: 'Start Round 2 first.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 completed.' });
     // 45-minute round timer — enforced server-side (auto-submit on expiry).
@@ -320,18 +358,18 @@ export function buildApp() {
     res.json({ reply, newClues, cluesFound: s.cluesFound, engine: result.engine });
   });
 
-  app.post('/api/detective/notes', (req, res) => {
+  app.post('/api/detective/notes', async (req, res) => {
     const { participantId, notes } = req.body || {};
-    const s = store.detSessions[String(participantId)];
+    const s = await ensureDet(String(participantId));
     if (!s) return res.status(404).json({ error: 'No session.' });
     s.notes = String(notes || '').slice(0, 5000); persistDetSession(s);
     res.json({ ok: true });
   });
 
-  app.post('/api/detective/accuse', (req, res) => {
+  app.post('/api/detective/accuse', async (req, res) => {
     const { participantId, suspectId, motive, explanation, evidenceIds } = req.body || {};
-    const p = store.participants[String(participantId)];
-    const s = store.detSessions[String(participantId)];
+    const p = await ensureParticipantById(String(participantId));
+    const s = await ensureDet(String(participantId));
     if (!p || !s) return res.status(404).json({ error: 'No session.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Already submitted.' });
     const questionsAsked = Object.values(s.qCounts).reduce((a, b) => a + b, 0);
@@ -347,12 +385,19 @@ export function buildApp() {
     p.finishedAt = new Date().toISOString();
     persistParticipant(p); persistDetSession(s);
     broadcast('leaderboard_updated', { leaderboard: leaderboard() });
-    res.json({ ...result, totalScore: p.totalScore, round1Score: p.round1Score, thankYou: 'Thank you for participating! Wait for the final result.' });
+    // Scores stay server-side only — the client just gets the thank-you note.
+    res.json({ thankYou: 'Thank you for participating! Wait for the final result.' });
   });
 
   // ---------- leaderboard + realtime (ADMIN ONLY — never exposed to participants) ----------
-  app.get('/api/leaderboard', requireAdmin, (_req, res) => res.json({ leaderboard: leaderboard() }));
+  // On serverless these merge Mongo first (instances don't share memory).
+  app.get('/api/leaderboard', requireAdmin, async (_req, res) => {
+    await hydrateStore();
+    res.json({ leaderboard: leaderboard() });
+  });
   app.get('/api/realtime/stream', requireAdmin, (req, res) => {
+    // Serverless functions can't hold SSE streams — clients degrade to polling.
+    if (process.env.VERCEL) return res.status(204).end();
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -370,7 +415,8 @@ export function buildApp() {
     if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) return res.json({ token: ADMIN_TOKEN, email: ADMIN_EMAIL });
     return res.status(401).json({ error: 'Invalid admin credentials.' });
   });
-  app.get('/api/admin/participants', requireAdmin, (_req, res) => {
+  app.get('/api/admin/participants', requireAdmin, async (_req, res) => {
+    await hydrateStore();
     res.json({ participants: Object.values(store.participants).map(stripKey), leaderboard: leaderboard() });
   });
   app.get('/api/admin/config', requireAdmin, (_req, res) => {
