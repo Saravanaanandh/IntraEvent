@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+/* ============ MIDNIGHT TRIBUNAL — unified theme (neon arena × noir dossier) ============
+   Base: violet-ink #0a0614 · Panels #150e28 · Borders #4a3670
+   Arena accent (Round 1): fuchsia/violet · Dossier accent (Round 2): emerald + gold
+   Shared chrome: antique gold · Text: lavender-white #ece9f7
+=============================================================================== */
+
+@layer base {
+  body {
+    font-family: 'Inter', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    color: #ece9f7;
+    background-color: #0a0614;
+  }
+}
+
+/* ---- Display fonts ---- */
+.font-display {
+  font-family: 'Orbitron', 'Inter', sans-serif;
+}
+
+.font-code {
+  font-family: 'Fira Code', monospace;
+}
+
+.font-dossier {
+  font-family: 'Cinzel', Georgia, serif;
+}
+
+.font-type {
+  font-family: 'Courier Prime', 'Fira Code', monospace;
+}
+
+/* ---- Signature gradient title (violet → fuchsia → gold) ---- */
+.title-tribunal {
+  background: linear-gradient(to right, #c4b5fd, #f0abfc, #fde68a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---- Signature primary button ---- */
+.btn-tribunal {
+  background: linear-gradient(to right, #7c3aed, #d946ef, #f59e0b);
+  color: #fff;
+  box-shadow: 0 10px 30px -8px rgba(168, 85, 247, 0.55);
+  transition: filter 0.2s ease, transform 0.2s ease;
+}
+
+.btn-tribunal:hover {
+  filter: brightness(1.12);
+}
+
+.btn-tribunal:disabled {
+  opacity: 0.45;
+  filter: grayscale(0.4);
+  box-shadow: none;
+}
+
+/* ---- Gold micro-label (shared chrome) ---- */
+.label-gold {
+  font-family: 'Fira Code', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: rgba(253, 230, 138, 0.8);
+}
+
+/* ---- Tribunal panel ---- */
+.panel-tribunal {
+  background: rgba(21, 14, 40, 0.88);
+  border: 1px solid rgba(74, 54, 112, 0.7);
+}
+
+/* ---- Glows ---- */
+.glow-arena {
+  box-shadow: 0 0 25px -5px rgba(217, 70, 239, 0.35);
+}
+
+.glow-verdict {
+  box-shadow: 0 0 25px -5px rgba(245, 158, 11, 0.35);
+}
+
+.glow-live {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.25);
+}
+
+/* ---- Violet scanline grid + faint gold dot matrix ---- */
+.bg-grid-pattern {
+  background-size: 36px 36px;
+  background-image:
+    linear-gradient(to right, rgba(167, 139, 250, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(167, 139, 250, 0.05) 1px, transparent 1px);
+}
+
+.bg-dot-matrix {
+  background-image: radial-gradient(rgba(253, 230, 138, 0.09) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ---- View entrance ---- */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.35s ease-out both;
+}
+
+/* ---- Detective timer pulse ---- */
+@keyframes game-timer-slow-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.game-timer-pulse {
+  animation: game-timer-slow-pulse 1.4s ease-in-out infinite;
+}
+
+/* ---- AI typing indicator: jumping dots ---- */
+@keyframes dotJump {
+  0%, 100% { transform: translateY(0); opacity: 0.35; }
+  50% { transform: translateY(-6px); opacity: 1; }
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #f0abfc;
+  display: inline-block;
+  animation: dotJump 1s ease-in-out infinite;
+}
+
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+.typing-dot-emerald { background: #6ee7b7; }
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0614;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3d2c63;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5b4a8a;
+}
