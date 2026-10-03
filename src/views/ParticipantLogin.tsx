@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { UserCheck, ChevronLeft, Fingerprint, KeyRound, ExternalLink } from 'lucide-react';
 import { saveParticipant, getStoredParticipant } from '../utils/storage';
 import { soundFX } from '../utils/audio';
+import { enterFullscreen } from '../utils/fullscreen';
 import type { Participant } from '../types';
 
 const OLLAMA_KEYS_URL = 'https://ollama.com/settings/keys';
@@ -32,6 +33,7 @@ export default function ParticipantLogin({ onLogin, onBack }: { onLogin: (p: Par
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
       saveParticipant(data.participant);
+      void enterFullscreen();
       onLogin(data.participant);
     } catch (ex: any) { soundFX.playFail(); setErr(ex.message); }
     finally { setLoading(false); }

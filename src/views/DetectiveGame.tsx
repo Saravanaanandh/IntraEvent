@@ -13,7 +13,7 @@ function fmtClock(totalSec: number): string {
   return String(m).padStart(2, '0') + ':' + String(r).padStart(2, '0');
 }
 
-export default function DetectiveGame({ participant, onDone, onExit }: { participant: Participant; onDone: (p: Participant) => void; onExit: () => void }) {
+export default function DetectiveGame({ participant, onDone, onExit, readOnly = false }: { participant: Participant; onDone: (p: Participant) => void; onExit: () => void; readOnly?: boolean }) {
   const [story, setStory] = useState<any>(null);
   const [suspect, setSuspect] = useState('vicky');
   const [chats, setChats] = useState<Record<string, { sender: string; text: string }[]>>({});
@@ -27,13 +27,30 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
   const [now, setNow] = useState(() => Date.now());
   const autoFinished = useRef(false);
   const finishRef = useRef(() => {});
-  const focus = useFocusLock(participant.id, true);
+  const focus = useFocusLock(participant.id, !readOnly);
   finishRef.current = () => submitAccusation(true);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (readOnly) {
+      // Sealed round: view-only history, no new session, no timer.
+      fetch(`/api/participant/history?participantId=${participant.id}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.case) setStory(d.case);
+          if (d.detective) {
+            const slim: Record<string, { sender: string; text: string }[]> = {};
+            for (const [k, v] of Object.entries<any>(d.detective.chats || {})) slim[k] = (v || []).map((m: any) => ({ sender: m.sender, text: m.text }));
+            setChats(slim);
+            setClues(d.detective.cluesFound || []);
+            if (d.detective.notes) setNotes(d.detective.notes);
+          }
+        })
+        .catch((e) => setErr(String(e)));
+      return;
+    }
     fetch('/api/detective/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId: participant.id }) })
       .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
       .then(({ ok, d }) => {
@@ -55,8 +72,9 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [chats, suspect, busy]);
 
-  // 45-minute countdown - auto-submits the charge-sheet at zero.
+  // 45-minute countdown - auto-submits the charge-sheet at zero (live rounds only).
   useEffect(() => {
+    if (readOnly) return;
     const t = setInterval(() => {
       const tnow = Date.now();
       setNow(tnow);
@@ -75,7 +93,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
   }
 
   async function ask() {
-    if (!q.trim() || busy) return;
+    if (readOnly || !q.trim() || busy) return;
     if (Date.now() >= deadline) { finishRef.current(); return; }
     setBusy(true); setErr('');
     try {
@@ -100,7 +118,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
   }
 
   async function submitAccusation(auto = false) {
-    if (autoFinished.current) return;
+    if (readOnly || autoFinished.current) return;
     autoFinished.current = true;
     exitFullscreen();
     setBusy(true); setErr('');
@@ -167,6 +185,21 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
         </div>
       )}
 
+      {focus.fsBlocked && (
+        <div className="fixed inset-0 z-[100] overflow-y-auto bg-[#0a0614]/95 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-md w-full p-8 rounded-3xl panel-tribunal border-2 border-amber-200/50 text-center glow-verdict animate-fadeIn">
+            <div className="label-gold">Focus lock</div>
+            <h2 className="font-display font-black text-2xl mt-2 tracking-wider">FULLSCREEN REQUIRED</h2>
+            <p className="text-xs text-[#8f86ad] font-mono mt-2 leading-relaxed">You left fullscreen during an active round. This break has been reported. Return to fullscreen to continue - your timer keeps running.</p>
+            <button onClick={focus.resume} className="mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm btn-tribunal">RESUME FULLSCREEN</button>
+          </div>
+        </div>
+      )}
+      {readOnly && (
+        <div className="mt-2 font-mono text-[11px] px-3 py-2 rounded-xl bg-[#1d1440] border border-[#6b4fa8]/60 text-amber-200 flex items-center gap-1.5 animate-fadeIn">
+          <Gavel className="w-3.5 h-3.5" /> CASE SEALED — READ ONLY. Review depositions, clues and notes; no new questions.
+        </div>
+      )}
       <div className="grid xl:grid-cols-12 gap-3 mt-3 items-start">
         {/* ============ COLUMN 1 — CASE FILE ============ */}
         <div className="xl:col-span-3 rounded-2xl border border-[#4a3670]/60 bg-[#150e28]/70 p-5">
@@ -253,7 +286,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
                   </div>
                 )}
               </div>
-              <div className="p-3 border-t border-[#4a3670]/50 flex gap-2 bg-[#0a0614]/40">
+              <div className="p-3 border-t border-[#4a3670]/50 flex gap-2 bg-[#0a0614]/40" style={{ display: readOnly ? 'none' : undefined }}>
                 <input
                   className="flex-1 px-3 py-2.5 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-sm font-sans focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none placeholder:text-[#5f5585] text-[#ece9f7]"
                   value={q} onChange={(e) => setQ(e.target.value)}
@@ -297,10 +330,10 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
             <textarea
               rows={5}
               className="mt-2 w-full p-3 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 font-mono text-xs focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none placeholder:text-[#5f5585] text-[#ece9f7]"
-              value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes}
+              value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} disabled={readOnly}
               placeholder="Link Perumal→breaker 9:42, Rs.10L bribe, Vicky Rs.85L debt + deed, Rangan CCTV alibi…"
             />
-            <div className="mt-3 rounded-2xl border border-[#4a3670]/60 bg-[#0a0614]/60 p-4">
+            <div className="mt-3 rounded-2xl border border-[#4a3670]/60 bg-[#0a0614]/60 p-4" style={{ display: readOnly ? 'none' : undefined }}>
               <div className="font-mono text-[11px] uppercase tracking-widest text-amber-200 flex items-center gap-1.5"><Gavel className="w-4 h-4" /> Final Accusation — one chance</div>
               <select className="mt-2 w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-sm focus:border-amber-200 outline-none text-[#ece9f7]" value={accuse.suspectId} onChange={(e) => setAccuse({ ...accuse, suspectId: e.target.value })}>
                 {story.suspects.map((s: any) => <option key={s.id} value={s.id}>{s.name} — {s.role}</option>)}
@@ -313,7 +346,7 @@ export default function DetectiveGame({ participant, onDone, onExit }: { partici
       </div>
 
       {err && <div className="text-red-300 text-xs font-mono bg-red-950/70 border border-red-400/50 rounded-xl px-3 py-2 mt-3 animate-fadeIn">{err}</div>}
-      <button onClick={() => submitAccusation(false)} disabled={busy} className="mt-3 w-full px-6 py-3.5 rounded-2xl font-mono font-black text-sm uppercase bg-gradient-to-r from-amber-300 to-yellow-200 text-[#241a05] hover:brightness-110 disabled:opacity-50 glow-verdict">
+      <button onClick={() => submitAccusation(false)} disabled={busy} style={{ display: readOnly ? 'none' : undefined }} className="mt-3 w-full px-6 py-3.5 rounded-2xl font-mono font-black text-sm uppercase bg-gradient-to-r from-amber-300 to-yellow-200 text-[#241a05] hover:brightness-110 disabled:opacity-50 glow-verdict">
         <Search className="w-4 h-4 inline mr-1" /> Submit Solution &amp; Finish
       </button>
     </div>

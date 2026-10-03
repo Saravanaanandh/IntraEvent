@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Shield, ChevronLeft, Lock } from 'lucide-react';
 import { saveAdminToken } from '../utils/storage';
 import { soundFX } from '../utils/audio';
+import { enterFullscreen } from '../utils/fullscreen';
 
 export default function AdminLogin({ onLogin, onBack }: { onLogin: () => void; onBack: () => void }) {
   const [email, setEmail] = useState('admin@gces.in');
@@ -15,6 +16,7 @@ export default function AdminLogin({ onLogin, onBack }: { onLogin: () => void; o
     const d = await res.json();
     if (!res.ok) { soundFX.playFail(); setErr(d.error || 'Login failed'); return; }
     saveAdminToken(d.token);
+    void enterFullscreen();
     onLogin();
   }
 

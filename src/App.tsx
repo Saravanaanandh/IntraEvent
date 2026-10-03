@@ -43,8 +43,7 @@ export default function App() {
     }
     if (v === 'lie' || v === 'detective') {
       if (!participant) { setView('plogin'); return; }
-      // A completed Round 1 can never be reopened — not from nav, not from anywhere.
-      if (v === 'lie' && participant.round1Completed) { setView('home'); return; }
+      // Completed rounds open read-only (view chats, no new messages).
       if (v === 'detective' && !participant.round1Completed) { setView('home'); return; }
       setView(v);
       return;
@@ -200,7 +199,7 @@ export default function App() {
         )}
 
         {view === 'lie' && participant && (
-          <LieArena participant={participant} onFinish={(p) => { soundFX.playSuccess(); setParticipant(p); setView('lieresult'); }} onExit={() => setView('home')} />
+          <LieArena participant={participant} readOnly={participant.round1Completed} onFinish={(p) => { soundFX.playSuccess(); setParticipant(p); setView('lieresult'); }} onExit={() => setView('home')} />
         )}
 
         {view === 'lieresult' && participant && (
@@ -221,7 +220,7 @@ export default function App() {
         )}
 
         {view === 'detective' && participant && (
-          <DetectiveGame participant={participant} onDone={(p) => { soundFX.playSuccess(); setParticipant(p); setView('thankyou'); }} onExit={() => setView('home')} />
+          <DetectiveGame participant={participant} readOnly={participant.round2Completed} onDone={(p) => { soundFX.playSuccess(); setParticipant(p); setView('thankyou'); }} onExit={() => setView('home')} />
         )}
 
         {view === 'thankyou' && participant && (
@@ -258,7 +257,7 @@ export default function App() {
           : <AdminLogin onLogin={() => { soundFX.playSuccess(); setIsAdmin(true); setView('admin'); }} onBack={() => setView('landing')} />)}
       </main>
 
-      <Footer />
+      {view !== 'admin' && <Footer />}
     </div>
   );
 }

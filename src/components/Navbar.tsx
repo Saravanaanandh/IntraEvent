@@ -23,7 +23,7 @@ export default function Navbar({ current, go, whoLabel, isParticipant, soundOn, 
   const LINKS = ALL_LINKS.filter((l) => !l.adminOnly || !isParticipant);
   return (
     <nav className="sticky top-0 z-50 bg-[#0a0614]/85 backdrop-blur-md border-b border-[#4a3670]/60">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
+      <div className="w-full px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
         <button
           onClick={() => { soundFX.playClick(); go('landing'); }}
           className="flex items-center gap-2.5 group"

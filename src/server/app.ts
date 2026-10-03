@@ -417,7 +417,42 @@ export function buildApp() {
   });
   app.get('/api/admin/participants', requireAdmin, async (_req, res) => {
     await hydrateStore();
-    res.json({ participants: Object.values(store.participants).map(stripKey), leaderboard: leaderboard() });
+    const req = _req as any;
+    // Paginated (default 10/page) + search across name/register no.
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const search = String(req.query.search || '').trim().toLowerCase();
+    let all = Object.values(store.participants);
+    if (search) {
+      all = all.filter((p) => p.name.toLowerCase().includes(search) || p.registerNo.toLowerCase().includes(search));
+    }
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const slice = all.slice((safePage - 1) * limit, safePage * limit).map(stripKey);
+    res.json({ participants: slice, total, page: safePage, totalPages, limit, leaderboard: leaderboard() });
+  });
+
+  // Read-only history for participants (works even after both rounds are sealed).
+  app.get('/api/participant/history', async (req, res) => {
+    const p = await ensureParticipantById(String((req.query as any).participantId || ''));
+    if (!p) return res.status(404).json({ error: 'Participant not found.' });
+    const lie = (await ensureLie(p.id)) || null;
+    const det = (await ensureDet(p.id)) || null;
+    res.json({
+      imageUrl: store.config.lieImageUrl,
+      lie: lie ? { messages: lie.messages, promptsUsed: lie.promptsUsed, finished: lie.finished } : null,
+      case: {
+        caseTitle: store.config.caseConfig.caseTitle,
+        victim: store.config.caseConfig.victim,
+        storyText: store.config.caseConfig.storyText,
+        suspects: store.config.caseConfig.suspects.map((x) => ({ id: x.id, name: x.name, role: x.role })),
+        clues: store.config.caseConfig.clues,
+      },
+      detective: det
+        ? { chats: det.chats, qCounts: det.qCounts, cluesFound: det.cluesFound, notes: det.notes }
+        : null,
+    });
   });
   app.get('/api/admin/config', requireAdmin, (_req, res) => {
     res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords, round2DurationSec: store.config.round2DurationSec, caseConfig: store.config.caseConfig });

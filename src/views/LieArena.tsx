@@ -13,7 +13,7 @@ function fmtClock(totalSec: number): string {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
 }
 
-export default function LieArena({ participant, onFinish, onExit }: { participant: Participant; onFinish: (p: Participant) => void; onExit: () => void }) {
+export default function LieArena({ participant, onFinish, onExit, readOnly = false }: { participant: Participant; onFinish: (p: Participant) => void; onExit: () => void; readOnly?: boolean }) {
   const [imageUrl, setImageUrl] = useState('');
   const [msgs, setMsgs] = useState<{ sender: string; text: string }[]>([]);
   const [input, setInput] = useState('');
@@ -28,7 +28,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoFinished = useRef(false);
   const finishRef = useRef(() => {});
-  const focus = useFocusLock(participant.id, true);
+  const focus = useFocusLock(participant.id, !readOnly);
 
   function leave() {
     exitFullscreen();
@@ -56,6 +56,21 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
   finishRef.current = () => finish(true);
 
   useEffect(() => {
+    if (readOnly) {
+      // Sealed round: view-only history, no new session, no timer.
+      fetch(`/api/participant/history?participantId=${participant.id}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.imageUrl) setImageUrl(d.imageUrl);
+          if (d.lie) {
+            setMsgs((d.lie.messages || []).map((m: any) => ({ sender: m.sender, text: m.text })));
+            setUsed(d.lie.promptsUsed || 0);
+            setTokensUsed((d.lie.messages || []).filter((m: any) => m.sender === 'user').reduce((a: number, m: any) => a + String(m.text || '').split(/\s+/).filter(Boolean).length, 0));
+          }
+        })
+        .catch((e) => setErr(String(e)));
+      return;
+    }
     fetch('/api/lie/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId: participant.id }) })
       .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
       .then(({ ok, d }) => {
@@ -77,8 +92,9 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 30-minute countdown — auto-submits at zero.
+  // 30-minute countdown — auto-submits at zero (live rounds only).
   useEffect(() => {
+    if (readOnly) return;
     const t = setInterval(() => {
       const tnow = Date.now();
       setNow(tnow);
@@ -94,7 +110,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }); }, [msgs, busy]);
 
   async function send() {
-    if (!input.trim() || busy) return;
+    if (readOnly || !input.trim() || busy) return;
     if (Date.now() >= deadline) { finishRef.current(); return; }
     setBusy(true); setErr('');
     try {
@@ -150,6 +166,11 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
           <History className="w-3.5 h-3.5" /> Previous conversation restored from the database — continue where you left off.
         </div>
       )}
+      {readOnly && (
+        <div className="mt-2 font-mono text-[11px] px-3 py-2 rounded-xl bg-[#1d1440] border border-[#6b4fa8]/60 text-amber-200 flex items-center gap-1.5 animate-fadeIn">
+          <Flag className="w-3.5 h-3.5" /> ROUND SEALED — READ ONLY. You can review the chat, but no new messages.
+        </div>
+      )}
 
       <div className="grid lg:grid-cols-12 gap-3 mt-3">
         {/* LEFT — exhibit, timer, trial details */}
@@ -164,6 +185,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
             </div>
           </div>
 
+          {!readOnly && (
           <div className={`rounded-3xl panel-tribunal p-5 text-center ${urgent ? 'border-red-400/60' : 'border-[#4a3670]/70'}`}>
             <div className="label-gold flex items-center justify-center gap-1.5">
               <Timer className="w-4 h-4" /> Time Remaining
@@ -179,6 +201,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
             </div>
             <p className="font-mono text-[10px] text-[#5f5585] mt-2">Auto-submits at 00:00 · timer survives reconnects</p>
           </div>
+          )}
 
           <div className="rounded-3xl panel-tribunal p-5">
             <div className="label-gold">Trial Details</div>
@@ -235,7 +258,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
 
           {err && <div className="mx-3 text-red-300 text-xs font-mono bg-red-950/70 border border-red-400/50 rounded-xl px-3 py-2 animate-fadeIn">{err}</div>}
 
-          <div className="p-3 border-t border-[#4a3670]/50 flex gap-2 bg-[#0a0614]/40">
+          <div className="p-3 border-t border-[#4a3670]/50 flex gap-2 bg-[#0a0614]/40" style={{ display: readOnly ? 'none' : undefined }}>
             <textarea
               className="flex-1 px-4 py-3 rounded-2xl bg-[#0a0614] border border-[#4a3670]/70 font-code text-sm focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400/40 outline-none placeholder:text-[#5f5585] resize-none text-[#ece9f7]"
               rows={2}
@@ -249,7 +272,7 @@ export default function LieArena({ participant, onFinish, onExit }: { participan
             </button>
           </div>
 
-          <div className="px-3 pb-3 bg-[#0a0614]/40">
+          <div className="px-3 pb-3 bg-[#0a0614]/40" style={{ display: readOnly ? 'none' : undefined }}>
             <button onClick={() => finish(false)} disabled={busy} className="w-full px-6 py-3.5 rounded-xl font-mono font-bold text-sm bg-emerald-500 hover:bg-emerald-400 text-[#06110c] disabled:opacity-40 flex items-center justify-center gap-2 shadow-xl transition-all glow-live">
               <Flag className="w-4 h-4" /> SUBMIT ROUND 1 (UNLOCKS ROUND 2)
             </button>

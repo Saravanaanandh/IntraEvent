@@ -1,11 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Shield, Users, Image as ImageIcon, FileText, RotateCcw, LogOut } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Shield, Users, Image as ImageIcon, FileText, RotateCcw, LogOut, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { getAdminToken } from '../utils/storage';
 import { soundFX } from '../utils/audio';
 import Leaderboard from './Leaderboard';
 
 export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [parts, setParts] = useState<any[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [searchInput, setSearchInput] = useState('');
+  const pageRef = useRef(1);
+  const searchRef = useRef('');
   const [imageUrl, setImageUrl] = useState('');
   const [truthLabel, setTruthLabel] = useState('');
   const [truthKeywords, setTruthKeywords] = useState('');
@@ -17,10 +23,28 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const token = getAdminToken() || '';
   const auth = { Authorization: `Bearer ${token}` };
 
+  // Debounced search — resets to page 1 across the full list.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      searchRef.current = searchInput.trim();
+      pageRef.current = 1;
+      setPage(1);
+      load();
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
   async function load() {
-    const r = await fetch('/api/admin/participants', { headers: auth });
+    const q = `?page=${pageRef.current}&limit=10&search=${encodeURIComponent(searchRef.current)}`;
+    const r = await fetch('/api/admin/participants' + q, { headers: auth });
     const d = await r.json();
-    if (r.ok) setParts(d.participants || []);
+    if (r.ok) {
+      setParts(d.participants || []);
+      setTotal(d.total || 0);
+      setTotalPages(d.totalPages || 1);
+      setPage(d.page || 1);
+    }
     const c = await (await fetch('/api/admin/config', { headers: auth })).json();
     if (c.lieImageUrl) {
       setImageUrl((prev) => (document.activeElement?.tagName === 'INPUT' ? prev : c.lieImageUrl || ''));
@@ -45,6 +69,13 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     return () => { es.close(); clearInterval(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function gotoPage(n: number) {
+    const p = Math.max(1, Math.min(totalPages, n));
+    pageRef.current = p;
+    setPage(p);
+    load();
+  }
 
   async function saveImage() {
     setMsg('');
@@ -89,9 +120,20 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       {msg && <div className="text-xs font-mono bg-emerald-500/10 border border-emerald-400/40 text-emerald-200 rounded-2xl px-4 py-2.5 animate-fadeIn">{msg}</div>}
 
       <div className="rounded-3xl border border-[#4a3670]/70 bg-[#150e28]/90 p-6">
-        <h3 className="font-mono text-xs uppercase tracking-widest text-[#cfc8ea] flex items-center gap-2">
-          <Users className="w-4 h-4 text-emerald-300" /> Participants Details &amp; Scores ({parts.length})
-        </h3>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h3 className="font-mono text-xs uppercase tracking-widest text-[#cfc8ea] flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-300" /> Participants Details &amp; Scores ({total})
+          </h3>
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-[#5f5585]" />
+            <input
+              className="pl-9 pr-3 py-2 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-xs font-sans focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none placeholder:text-[#5f5585] text-[#ece9f7] w-56"
+              placeholder="Search name / reg no…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+        </div>
         <div className="overflow-x-auto mt-3 rounded-2xl border border-[#4a3670]/60 overflow-hidden">
           <table className="w-full text-xs">
             <thead>
@@ -129,9 +171,30 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                   </tr>
                 );
               })}
-              {!parts.length && <tr><td colSpan={7} className="text-center text-[#8f86ad] font-mono text-xs py-5">No investigators enrolled yet.</td></tr>}
+              {!parts.length && <tr><td colSpan={7} className="text-center text-[#8f86ad] font-mono text-xs py-5">No investigators found.</td></tr>}
             </tbody>
           </table>
+        </div>
+        {/* pager: 10 per page */}
+        <div className="flex items-center justify-between mt-3 flex-wrap gap-2">
+          <span className="font-mono text-[11px] text-[#8f86ad]">
+            {total === 0 ? 'No records' : `Showing ${Math.min(total, (page - 1) * 10 + 1)}–${Math.min(total, page * 10)} of ${total}`}
+          </span>
+          <div className="flex items-center gap-1">
+            <button onClick={() => gotoPage(page - 1)} disabled={page <= 1} className="p-2 rounded-lg border border-[#4a3670]/60 text-[#d9d2f2] disabled:opacity-40 hover:bg-[#1d1440] flex items-center gap-1 font-mono text-[11px]">
+              <ChevronLeft className="w-3.5 h-3.5" /> PREV
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .filter((n) => n === 1 || n === totalPages || Math.abs(n - page) <= 1)
+              .map((n) => (
+                <button key={n} onClick={() => gotoPage(n)} className={`w-8 h-8 rounded-lg font-mono text-[11px] border ${n === page ? 'bg-amber-300 text-[#241a05] border-amber-200/60 font-bold' : 'border-[#4a3670]/60 text-[#d9d2f2] hover:bg-[#1d1440]'}`}>
+                  {n}
+                </button>
+              ))}
+            <button onClick={() => gotoPage(page + 1)} disabled={page >= totalPages} className="p-2 rounded-lg border border-[#4a3670]/60 text-[#d9d2f2] disabled:opacity-40 hover:bg-[#1d1440] flex items-center gap-1 font-mono text-[11px]">
+              NEXT <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

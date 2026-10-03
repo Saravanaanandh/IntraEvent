@@ -37,8 +37,8 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
           </div>
           <h3 className="font-display font-black text-xl mt-2 tracking-wider">AI-LYING</h3>
           <p className="text-xs text-[#8f86ad] mt-1 font-mono leading-relaxed">Chat freely within the time. The machine insists on a false label — crack it into admitting the truth.</p>
-          <button onClick={() => { soundFX.playClick(); onStartLie(); }} disabled={r1} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm flex items-center justify-center gap-2 transform hover:-translate-y-0.5 ${r1 ? 'bg-[#241a45] text-[#5f5585] cursor-not-allowed' : 'btn-tribunal'}`}>
-            {r1 ? 'SEALED ✓' : <><Zap className="w-4 h-4" /> START ROUND 1</>}
+          <button onClick={() => { soundFX.playClick(); onStartLie(); }} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm flex items-center justify-center gap-2 transform hover:-translate-y-0.5 ${r1 ? 'bg-[#241a45] text-[#d9d2f2] hover:bg-[#2d2154]' : 'btn-tribunal'}`}>
+            {r1 ? 'VIEW ROUND 1' : <><Zap className="w-4 h-4" /> START ROUND 1</>}
           </button>
         </div>
 
@@ -56,8 +56,8 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
           </div>
           <h3 className="font-dossier font-extrabold text-xl mt-2">THE HIDDEN MYSTERY</h3>
           <p className="text-xs text-[#8f86ad] mt-1 font-mono leading-relaxed">Interrogate 4 suspects, gather forensic clues, file one charge-sheet. 45 minutes on the clock.</p>
-          <button onClick={() => { soundFX.playClick(); onStartDetective(); }} disabled={!r1 || r2} className={`mt-4 w-full px-6 py-3 rounded-2xl font-mono font-bold text-sm transition-all ${!r1 || r2 ? 'bg-[#241a45] text-[#5f5585] cursor-not-allowed' : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-[#06110c] hover:brightness-110 glow-live'}`}>
-            {!r1 ? '🔒 FINISH ROUND 1 FIRST' : r2 ? 'SEALED ✓' : 'OPEN CASE FILE →'}
+          <button onClick={() => { soundFX.playClick(); onStartDetective(); }} disabled={!r1} className={`mt-4 w-full px-6 py-3 rounded-2xl font-mono font-bold text-sm transition-all ${!r1 ? 'bg-[#241a45] text-[#5f5585] cursor-not-allowed' : r2 ? 'bg-[#241a45] text-[#d9d2f2] hover:bg-[#2d2154]' : 'bg-gradient-to-r from-emerald-500 to-teal-500 text-[#06110c] hover:brightness-110 glow-live'}`}>
+            {!r1 ? 'LOCKED - FINISH ROUND 1 FIRST' : r2 ? 'VIEW ROUND 2' : 'OPEN CASE FILE'}
           </button>
         </div>
       </div>
