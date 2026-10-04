@@ -16,6 +16,7 @@ function getAi(): any {
 export const DEFAULT_CASE: CaseConfig = {
   caseTitle: 'The Hidden Mystery — The 8-Minute Blackout at 9:42 PM',
   victim: "Varadarajan (62), found dead in study",
+  publicBrief: 'On the night of the incident, the Varadarajan ancestral house suffered an 8-minute total blackout from 9:42 PM to 9:50 PM. When power returned, Varadarajan (62) was found dead inside his study. Four people are tied to that night: Vicky - the victim nephew; Perumal - the family cook; Meena - the victim daughter; and Rangan - the family land rival. No one has confessed. Interrogate each of them, uncover what they hide, and file your charge-sheet.',
   culpritId: 'vicky',
   storyText: 'Ancestral house. 8-min blackout 9:42–9:50 PM. Vicky (nephew, Rs.85L debt, facing disinheritance) paid cook Perumal Rs.10L (Rs.2L advance) to pull the 63A main breaker at 9:42. Vicky entered the study, scuffle, killed Varadarajan, stole the settlement deed. Meena (daughter) hid her Rs.25L ledger (red herring). Rangan (rival) has police-station alibi 9:30–10:15.',
   suspects: [

@@ -291,7 +291,7 @@ export default function DetectiveGame({ participant, onDone, onExit, readOnly = 
                   className="flex-1 px-3 py-2.5 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-sm font-sans focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none placeholder:text-[#5f5585] text-[#ece9f7]"
                   value={q} onChange={(e) => setQ(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && ask()}
-                  placeholder={`Interrogate ${activeSuspect?.name}… (breaker? bribe? debt? alibi?)`}
+                  placeholder={`Interrogate ${activeSuspect?.name}... (where? alibi? motive?)`}
                 />
                 <button onClick={ask} disabled={busy} className="px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-[#06110c] font-mono font-bold text-xs disabled:opacity-50 flex items-center gap-1.5 glow-live">
                   <Send className="w-4 h-4" /> ASK
@@ -331,15 +331,15 @@ export default function DetectiveGame({ participant, onDone, onExit, readOnly = 
               rows={5}
               className="mt-2 w-full p-3 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 font-mono text-xs focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none placeholder:text-[#5f5585] text-[#ece9f7]"
               value={notes} onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} disabled={readOnly}
-              placeholder="Link Perumal→breaker 9:42, Rs.10L bribe, Vicky Rs.85L debt + deed, Rangan CCTV alibi…"
+              placeholder="Who had a motive? Who benefits? Where was everyone at 9:42? What contradicts whom?"
             />
             <div className="mt-3 rounded-2xl border border-[#4a3670]/60 bg-[#0a0614]/60 p-4" style={{ display: readOnly ? 'none' : undefined }}>
               <div className="font-mono text-[11px] uppercase tracking-widest text-amber-200 flex items-center gap-1.5"><Gavel className="w-4 h-4" /> Final Accusation — one chance</div>
               <select className="mt-2 w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-sm focus:border-amber-200 outline-none text-[#ece9f7]" value={accuse.suspectId} onChange={(e) => setAccuse({ ...accuse, suspectId: e.target.value })}>
                 {story.suspects.map((s: any) => <option key={s.id} value={s.id}>{s.name} — {s.role}</option>)}
               </select>
-              <input className="mt-2 w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-sm focus:border-amber-200 outline-none placeholder:text-[#5f5585] text-[#ece9f7]" placeholder="Motive (debt / settlement deed…)" value={accuse.motive} onChange={(e) => setAccuse({ ...accuse, motive: e.target.value })} />
-              <input className="mt-2 w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-sm focus:border-amber-200 outline-none placeholder:text-[#5f5585] text-[#ece9f7]" placeholder="Explanation (blackout / breaker / study…)" value={accuse.explanation} onChange={(e) => setAccuse({ ...accuse, explanation: e.target.value })} />
+              <input className="mt-2 w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-sm focus:border-amber-200 outline-none placeholder:text-[#5f5585] text-[#ece9f7]" placeholder="Why would they do it?" value={accuse.motive} onChange={(e) => setAccuse({ ...accuse, motive: e.target.value })} />
+              <input className="mt-2 w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-sm focus:border-amber-200 outline-none placeholder:text-[#5f5585] text-[#ece9f7]" placeholder="What happened, step by step..." value={accuse.explanation} onChange={(e) => setAccuse({ ...accuse, explanation: e.target.value })} />
             </div>
           </div>
         </div>

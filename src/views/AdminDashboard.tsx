@@ -55,7 +55,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         setFalseKeywords((c.falseKeywords || []).join(', '));
       }
     }
-    setStory((s: any) => s ?? { caseTitle: c.caseTitle, victim: c.victim, storyText: c.storyText, culpritId: '', suspects: [], clues: [] });
+    setStory((s: any) => s ?? { caseTitle: c.caseTitle, victim: c.victim, storyText: c.storyText, publicBrief: c.caseConfig?.publicBrief || '', culpritId: c.caseConfig?.culpritId || '', suspects: c.caseConfig?.suspects || [], clues: c.caseConfig?.clues || [] });
   }
 
   useEffect(() => {
@@ -223,7 +223,8 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
             <div className="space-y-2 mt-2">
               <input className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]" value={story.caseTitle || ''} onChange={(e) => setStory({ ...story, caseTitle: e.target.value })} placeholder="Case title" />
               <input className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]" value={story.victim || ''} onChange={(e) => setStory({ ...story, victim: e.target.value })} placeholder="Victim" />
-              <textarea className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]" rows={4} value={story.storyText || ''} onChange={(e) => setStory({ ...story, storyText: e.target.value })} placeholder="Story text" />
+              <textarea className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]" rows={4} value={story.storyText || ''} onChange={(e) => setStory({ ...story, storyText: e.target.value })} placeholder="Full truth (server/AI only, never shown to players)" />
+              <textarea className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-emerald-400/40 text-xs focus:border-emerald-300 outline-none text-[#ece9f7]" rows={4} value={story.publicBrief || ''} onChange={(e) => setStory({ ...story, publicBrief: e.target.value })} placeholder="Public briefing: what happened, when, who was around (no killer/motive/method)" />
               <input className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]" value={story.culpritId || ''} onChange={(e) => setStory({ ...story, culpritId: e.target.value })} placeholder="culpritId (e.g. vicky)" />
               <button onClick={saveStory} className="w-full px-6 py-3 rounded-2xl font-mono font-bold text-xs bg-gradient-to-r from-amber-300 to-yellow-200 text-[#241a05]">SAVE STORY</button>
               <p className="text-[11px] text-[#5f5585] font-mono">Full characters/clues JSON via: PUT /api/admin/config/story {'{suspects:[{id,name,role,personality,relationship,alibi,trueKnowledge,isGuilty,guiltyMotive,guiltyFlaw,innocentSecret,gatedClues:[{clue,trigger}]}], clues:[...]}'}</p>

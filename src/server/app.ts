@@ -123,6 +123,19 @@ async function ensureDet(pid: string) {
   return s;
 }
 
+// What participants are allowed to know: what happened, when, who was
+// around. The full storyText never leaves the server (it drives the AI).
+function publicCase() {
+  const c = store.config.caseConfig;
+  return {
+    caseTitle: c.caseTitle,
+    victim: c.victim,
+    storyText: (c as any).publicBrief || DEFAULT_CASE.publicBrief,
+    suspects: c.suspects.map((x) => ({ id: x.id, name: x.name, role: x.role })),
+    clues: c.clues,
+  };
+}
+
 export function leaderboard() {
   const list = Object.values(store.participants).map((p) => ({
     participantId: p.id, name: p.name, registerNo: p.registerNo,
@@ -308,7 +321,7 @@ export function buildApp() {
     if (!p) return res.status(404).json({ error: 'Login again.' });
     if (!p.round1Completed) return res.status(403).json({ error: 'Complete Round 1 (AI-Lying) first to unlock Round 2.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 already completed.' });
-    const casePayload = { caseTitle: store.config.caseConfig.caseTitle, victim: store.config.caseConfig.victim, storyText: store.config.caseConfig.storyText, suspects: store.config.caseConfig.suspects.map((x) => ({ id: x.id, name: x.name, role: x.role })), clues: store.config.caseConfig.clues };
+    const casePayload = publicCase();
     const existing = await ensureDet(p.id);
     if (existing) {
       // Resume — restore chats, clues and notes, do NOT wipe after an interrupt.
@@ -442,13 +455,7 @@ export function buildApp() {
     res.json({
       imageUrl: store.config.lieImageUrl,
       lie: lie ? { messages: lie.messages, promptsUsed: lie.promptsUsed, finished: lie.finished } : null,
-      case: {
-        caseTitle: store.config.caseConfig.caseTitle,
-        victim: store.config.caseConfig.victim,
-        storyText: store.config.caseConfig.storyText,
-        suspects: store.config.caseConfig.suspects.map((x) => ({ id: x.id, name: x.name, role: x.role })),
-        clues: store.config.caseConfig.clues,
-      },
+      case: publicCase(),
       detective: det
         ? { chats: det.chats, qCounts: det.qCounts, cluesFound: det.cluesFound, notes: det.notes }
         : null,
@@ -491,6 +498,7 @@ export function buildApp() {
       victim: String(b.victim || store.config.caseConfig.victim),
       culpritId: String(b.culpritId || store.config.caseConfig.culpritId),
       storyText: String(b.storyText || store.config.caseConfig.storyText),
+      publicBrief: String(b.publicBrief || (store.config.caseConfig as any).publicBrief || DEFAULT_CASE.publicBrief),
       suspects: Array.isArray(b.suspects) && b.suspects.length ? b.suspects : store.config.caseConfig.suspects,
       clues: Array.isArray(b.clues) && b.clues.length ? b.clues : store.config.caseConfig.clues,
     };

@@ -70,7 +70,8 @@ export interface CaseConfig {
   caseTitle: string;
   victim: string;
   culpritId: string;
-  storyText: string;
+  storyText: string; // FULL truth — server/AI eyes only, never sent to participants
+  publicBrief: string; // spoiler-free briefing: what happened, when, who was around
   suspects: Suspect[];
   clues: { id: string; title: string; weight: number; description: string }[];
 }
