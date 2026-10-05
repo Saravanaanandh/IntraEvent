@@ -12,7 +12,7 @@ export default function ParticipantLogin({ onLogin, onBack }: { onLogin: (p: Par
   const stored = getStoredParticipant();
   const [name, setName] = useState(stored?.name || '');
   const [registerNo, setRegisterNo] = useState(stored?.registerNo || '');
-  const [college, setCollege] = useState(stored?.college || '');
+  const [year, setYear] = useState(stored?.year || (stored as any)?.college || 'II');
   const [apiKey, setApiKey] = useState('');
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,7 +28,7 @@ export default function ParticipantLogin({ onLogin, onBack }: { onLogin: (p: Par
     try {
       const res = await fetch('/api/participant/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, registerNo, college, ollamaKey: apiKey.trim() }),
+        body: JSON.stringify({ name, registerNo, year, college: year, ollamaKey: apiKey.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
@@ -67,15 +67,25 @@ export default function ParticipantLogin({ onLogin, onBack }: { onLogin: (p: Par
             </div>
           </div>
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider font-mono text-[#cfc8ea]">Register No / Unique No</label>
+            <label className="text-xs font-semibold uppercase tracking-wider font-mono text-[#cfc8ea]">Register No </label>
             <div className="relative mt-1">
               <Fingerprint className="absolute left-3 top-3 w-4 h-4 text-[#5f5585]" />
-              <input className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-sm font-sans focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400/40 outline-none placeholder:text-[#5f5585]" placeholder="4–20 chars, e.g. REG12345" value={registerNo} onChange={(e) => setRegisterNo(e.target.value)} required />
+              <input className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-sm font-sans focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400/40 outline-none placeholder:text-[#5f5585]" placeholder="e.g.,830100104000" value={registerNo} onChange={(e) => setRegisterNo(e.target.value)} required />
             </div>
           </div>
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wider font-mono text-[#cfc8ea]">College (optional)</label>
-            <input className="mt-1 w-full px-3 py-2.5 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-sm font-sans focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400/40 outline-none placeholder:text-[#5f5585]" placeholder="e.g. GCES" value={college} onChange={(e) => setCollege(e.target.value)} />
+            <label className="text-xs font-semibold uppercase tracking-wider font-mono text-[#cfc8ea]">Year</label>
+            <div className="relative mt-1">
+              <select
+                className="w-full px-3 py-2.5 rounded-xl bg-[#0a0614]/80 border border-[#4a3670]/70 text-sm font-sans focus:border-fuchsia-400 focus:ring-1 focus:ring-fuchsia-400/40 outline-none text-[#ece9f7] cursor-pointer"
+                value={year}
+                onChange={(e) => setYear(e.target.value)}
+                required
+              >
+                <option value="II">II (2nd Year)</option>
+                <option value="III">III (3rd Year)</option>
+              </select>
+            </div>
           </div>
           <div>
             <div className="flex items-center justify-between">

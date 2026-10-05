@@ -138,9 +138,16 @@ function publicCase() {
 
 export function leaderboard() {
   const list = Object.values(store.participants).map((p) => ({
-    participantId: p.id, name: p.name, registerNo: p.registerNo,
-    round1Score: p.round1Score, round2Score: p.round2Score, totalScore: finalScoreOutOf100(p.round1Score, p.round2Score),
-    round1Completed: p.round1Completed, round2Completed: p.round2Completed,
+    participantId: p.id,
+    name: p.name,
+    registerNo: p.registerNo,
+    year: (p as any).year || p.college || '',
+    round1Score: p.round1Score,
+    round2Score: p.round2Score,
+    totalScore: finalScoreOutOf100(p.round1Score, p.round2Score),
+    round1Completed: p.round1Completed,
+    round2Completed: p.round2Completed,
+    violations: p.violations,
   }));
   list.sort((a, b) => b.totalScore - a.totalScore || b.round1Score - a.round1Score || a.name.localeCompare(b.name));
   return list.map((e, i) => ({ rank: i + 1, ...e }));
@@ -166,7 +173,8 @@ export function buildApp() {
   app.post('/api/participant/login', async (req, res) => {
     const name = String(req.body?.name || '').trim();
     const registerNo = String(req.body?.registerNo || req.body?.registerNumber || '').trim().toUpperCase();
-    const college = String(req.body?.college || '').trim();
+    const year = String(req.body?.year || req.body?.college || '').trim();
+    const college = String(req.body?.college || req.body?.year || '').trim();
     const ollamaKey = String(req.body?.ollamaKey || '').trim();
     if (!/^[A-Za-z\s]{2,60}$/.test(name)) return res.status(400).json({ error: 'Enter valid name (2-60 letters).' });
     if (!/^[A-Za-z0-9\-_]{4,20}$/.test(registerNo)) return res.status(400).json({ error: 'Enter valid Register No / unique no (4-20 alphanumeric).' });
@@ -182,15 +190,17 @@ export function buildApp() {
     }
     if (!p) {
       const id = `p_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
-      p = { id, name, registerNo, college, ollamaKey, createdAt: new Date().toISOString(), round1Completed: false, round1Score: 0, round2Completed: false, round2Score: 0, totalScore: 0 };
+      p = { id, name, registerNo, year, college, ollamaKey, createdAt: new Date().toISOString(), round1Completed: false, round1Score: 0, round2Completed: false, round2Score: 0, totalScore: 0 };
       store.participants[id] = p; persistParticipant(p); broadcast('players_updated', { count: Object.keys(store.participants).length });
     } else {
       // Returning participant (e.g. after an interrupt): refresh their key so chats resume on it.
-      p.ollamaKey = ollamaKey; persistParticipant(p);
+      p.ollamaKey = ollamaKey;
+      if (year) p.year = year;
+      persistParticipant(p);
     }
     // Participants only ever receive identity + progress flags — never scores.
-    const { id, name: pname, registerNo: preg, college: pcollege, createdAt, round1Completed, round2Completed } = p;
-    res.json({ participant: { id, name: pname, registerNo: preg, college: pcollege, createdAt, round1Completed, round2Completed } });
+    const { id, name: pname, registerNo: preg, college: pcollege, year: pyear, createdAt, round1Completed, round2Completed } = p;
+    res.json({ participant: { id, name: pname, registerNo: preg, college: pcollege, year: pyear || pcollege, createdAt, round1Completed, round2Completed } });
   });
 
   // ---------- focus-lock violations (tab hidden / fullscreen exited mid-round) ----------

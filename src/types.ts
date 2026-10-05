@@ -2,6 +2,7 @@ export interface Participant {
   id: string;
   name: string;
   registerNo: string;
+  year?: string;
   college?: string;
   ollamaKey?: string; // participant's own Ollama Cloud API key (server-side only, never sent to clients)
   createdAt: string;
@@ -38,11 +39,13 @@ export interface LeaderboardEntry {
   participantId: string;
   name: string;
   registerNo: string;
+  year?: string;
   round1Score: number;
   round2Score: number;
   totalScore: number; // final combined score out of 100
   round1Completed: boolean;
   round2Completed: boolean;
+  violations?: { tabHidden: number; fullscreenExit: number };
 }
 
 export interface SuspectClue {

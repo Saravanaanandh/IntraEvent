@@ -31,14 +31,11 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
           </div>
           <h3 className="font-dossier font-extrabold text-lg mt-1">THE HIDDEN MYSTERY</h3>
           <ul className="text-xs text-[#cfc8ea] mt-3 space-y-2 font-mono leading-relaxed list-disc ml-4">
-            <li>Interrogate <b>Vicky / Perumal / Meena / Rangan</b> in English. Evasive answers hide clues — press specifics and confront contradictions. Replies are kept short and sharp.</li>
-            <li><b>45-minute timer</b> per investigation - auto-submits your charge-sheet at zero.</li>
-            <li><b>Focus lock:</b> both rounds run fullscreen. Leaving fullscreen or the tab is reported to the tribunal.</li>
-            <li><b>45-minute timer</b> per investigation — auto-submits your charge-sheet at zero.</li>
-            <li><b>Focus lock:</b> both rounds run fullscreen. Leaving fullscreen or the tab is reported to the tribunal and shown on your row.</li>
+            <li>Interrogate with characters . Evasive answers hide clues — press specifics and confront contradictions. Replies are kept short and sharp.</li>
+            <li><b>45-minute investigation</b> - auto-submits your charge-sheet at zero.</li>
+            <li><b>Focus lock:</b> Leaving fullscreen or the tab is reported to the tribunal.</li>
             <li>Clues surface from depositions. File one final <b className="text-amber-200">charge-sheet</b> (culprit + motive + explanation).</li>
             <li>Every charge-sheet is evaluated by the tribunal.</li>
-            <li>Unlocks only after Round 1 is sealed. One submission — then await the verdict.</li>
           </ul>
         </div>
       </div>
