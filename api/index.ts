@@ -13,6 +13,7 @@ export default async function handler(req: any, res: any) {
   if (!ready) {
     ready = connectMongo().catch(() => false);
   }
-  await ready;
+  const ok = await ready;
+  if (!ok) ready = null;
   return (app as any)(req, res);
 }

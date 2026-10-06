@@ -164,7 +164,11 @@ export function buildApp() {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
 
-  // ---------- public config ----------
+  // ---------- public status & config ----------
+  app.get('/api', (_req, res) => {
+    res.json({ ok: true, service: 'Midnight Tribunal API', status: 'online' });
+  });
+
   app.get('/api/config', (_req, res) => {
     res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, caseTitle: store.config.caseConfig.caseTitle, victim: store.config.caseConfig.victim, storyText: store.config.caseConfig.storyText, suspects: store.config.caseConfig.suspects.map((s) => ({ id: s.id, name: s.name, role: s.role, personality: s.personality })), clues: store.config.caseConfig.clues, round2DurationSec: store.config.round2DurationSec });
   });
@@ -432,6 +436,26 @@ export function buildApp() {
   });
 
   // ---------- admin ----------
+  app.all('/api/admin', (req, res) => {
+    if (req.headers.accept?.includes('application/json') && !req.headers.accept?.includes('text/html')) {
+      return res.json({
+        ok: true,
+        message: 'Midnight Tribunal Admin API',
+        portal: '/admin',
+        endpoints: [
+          'POST /api/admin/login',
+          'GET /api/admin/participants',
+          'GET /api/admin/config',
+          'POST /api/admin/config/lie-image',
+          'PUT /api/admin/config/story',
+          'POST /api/admin/reset',
+          'POST /api/admin/set-api-key',
+        ],
+      });
+    }
+    return res.redirect(302, '/admin');
+  });
+
   app.post('/api/admin/login', (req, res) => {
     const email = String(req.body?.email || req.body?.username || '').trim().toLowerCase();
     const password = String(req.body?.password || '');
