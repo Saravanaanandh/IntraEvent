@@ -25,15 +25,17 @@ export default function DetectiveGame({
   readOnly?: boolean;
 }) {
   const [story, setStory] = useState<any>(null);
-  const [suspect, setSuspect] = useState('vicky');
+  // Active suspect / accusation target follows the ACTIVE story (first
+  // person of interest), never a hardcoded previous-story character.
+  const [suspect, setSuspect] = useState('');
   const [chats, setChats] = useState<Record<string, { sender: string; text: string }[]>>({});
   const [q, setQ] = useState('');
   const [clues, setClues] = useState<string[]>([]);
   const [notes, setNotes] = useState('');
   const [restored, setRestored] = useState(false);
-  const [accuse, setAccuse] = useState({ suspectId: 'vicky', motive: '', explanation: '' });
+  const [accuse, setAccuse] = useState({ suspectId: '', motive: '', explanation: '' });
   const [engine, setEngine] = useState('');
-  const [deadline, setDeadline] = useState(() => Date.now() + 45 * 60 * 1000);
+  const [deadline, setDeadline] = useState(() => Date.now() + 60 * 60 * 1000);
   const [now, setNow] = useState(() => Date.now());
   const autoFinished = useRef(false);
   const finishRef = useRef(() => {});
@@ -79,7 +81,14 @@ export default function DetectiveGame({
       fetch(`/api/participant/history?participantId=${participant.id}`)
         .then((r) => r.json())
         .then((d) => {
-          if (d.case) setStory(d.case);
+          if (d.case) {
+            setStory(d.case);
+            const firstId = d.case?.suspects?.[0]?.id || '';
+            if (firstId) {
+              setSuspect((cur) => cur || firstId);
+              setAccuse((a) => ({ ...a, suspectId: a.suspectId || firstId }));
+            }
+          }
           if (d.detective) {
             const slim: Record<string, { sender: string; text: string }[]> = {};
             for (const [k, v] of Object.entries<any>(d.detective.chats || {}))
@@ -104,6 +113,13 @@ export default function DetectiveGame({
           return;
         }
         setStory(d.case);
+        {
+          const firstId = d.case?.suspects?.[0]?.id || '';
+          if (firstId) {
+            setSuspect((cur) => cur || firstId);
+            setAccuse((a) => ({ ...a, suspectId: a.suspectId || firstId }));
+          }
+        }
         setClues(d.cluesFound || []);
         if (d.chats && Object.keys(d.chats).length) {
           const slim: Record<string, { sender: string; text: string }[]> = {};
@@ -127,7 +143,7 @@ export default function DetectiveGame({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [chats, suspect, busy]);
 
-  // 45-minute countdown
+  // 1-hour countdown
   useEffect(() => {
     if (readOnly) return;
     const t = setInterval(() => {
@@ -154,8 +170,8 @@ export default function DetectiveGame({
     setQ('');
     setChats((c) => ({
       ...c,
-      [suspect]: [
-        ...(c[suspect] || []),
+      [effSuspect]: [
+        ...(c[effSuspect] || []),
         { sender: 'user', text: questionText },
       ],
     }));
@@ -167,7 +183,7 @@ export default function DetectiveGame({
       const res = await fetch('/api/detective/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId: participant.id, suspectId: suspect, message: questionText }),
+        body: JSON.stringify({ participantId: participant.id, suspectId: effSuspect, message: questionText }),
       });
       const d = await res.json();
       if (!res.ok) {
@@ -180,8 +196,8 @@ export default function DetectiveGame({
       if ((d.newClues || []).length) soundFX.playSuccess();
       setChats((c) => ({
         ...c,
-        [suspect]: [
-          ...(c[suspect] || []),
+        [effSuspect]: [
+          ...(c[effSuspect] || []),
           { sender: 'ai', text: d.reply },
         ],
       }));
@@ -243,7 +259,8 @@ export default function DetectiveGame({
       </div>
     );
 
-  const activeSuspect = story.suspects.find((x: any) => x.id === suspect);
+  const effSuspect = suspect || (story.suspects[0] ? story.suspects[0].id : '');
+  const activeSuspect = story.suspects.find((x: any) => x.id === effSuspect) || story.suspects[0];
   const qCountOf = (id: string) => (chats[id] || []).filter((m) => m.sender === 'user').length;
   const totalQuestions = Object.keys(chats).reduce((a, k) => a + qCountOf(k), 0);
   const suspectsEngaged = Object.keys(chats).filter((k) => (chats[k] || []).length > 0).length;
@@ -284,11 +301,11 @@ export default function DetectiveGame({
           </span>
           {focus.violations > 0 && (
             <span className="font-mono text-xs px-2.5 py-0.5 rounded-xl bg-red-500/10 border border-red-400/50 text-red-300">
-              FOCUS ISSUES: {focus.violations}
+              WARNINGS: {focus.violations}
             </span>
           )}
           <span className="font-mono text-xs px-2.5 py-0.5 rounded-xl bg-[#040814] border border-cyan-500/30 text-[#8e9cb5]">
-            ASKED: <b className="text-white">{totalQuestions}</b> · ENGAGED:{' '}
+            QUESTIONS: <b className="text-white">{totalQuestions}</b> · QUESTIONED:{' '}
             <b className="text-cyan-300">
               {suspectsEngaged}/{story.suspects.length}
             </b>
@@ -308,8 +325,8 @@ export default function DetectiveGame({
               FULLSCREEN REQUIRED
             </h2>
             <p className="text-xs text-[#8e9cb5] font-mono mt-2 leading-relaxed">
-              You left fullscreen during an active round. This break has been reported. Return to
-              fullscreen to continue - your timer keeps running.
+              You left fullscreen during an active round. Return to fullscreen to continue — your
+              timer keeps running.
             </p>
             <button
               onClick={focus.resume}
@@ -323,116 +340,115 @@ export default function DetectiveGame({
 
       {restored && (
         <div className="shrink-0 font-mono text-[11px] px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-400/40 text-emerald-300 flex items-center gap-1.5 animate-fadeIn">
-          <History className="w-3.5 h-3.5" /> Previous interrogations, clues and notes restored from
-          the database — continue where you left off.
+          <History className="w-3.5 h-3.5" /> Previous questions, clues, and notes restored — continue where you left off.
         </div>
       )}
       {readOnly && (
         <div className="shrink-0 font-mono text-[11px] px-3 py-1.5 rounded-xl bg-[#0b1730] border border-cyan-500/40 text-cyan-200 flex items-center gap-1.5 animate-fadeIn">
-          <Gavel className="w-3.5 h-3.5 text-emerald-400" /> CASE SEALED — READ ONLY. Review
-          depositions, clues and notes; no new questions.
+          <Gavel className="w-3.5 h-3.5 text-emerald-400" /> ROUND SEALED — READ ONLY. You can review your questions, clues, and notes.
         </div>
       )}
 
       {/* 3-Column Main Grid - Fills 100% width and 100% height */}
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-2.5 overflow-hidden">
-        {/* ============ COLUMN 1 — CASE FILE (Full Height) ============ */}
-        <div className="xl:col-span-3 rounded-2xl border border-cyan-500/30 bg-[#091122]/90 p-4 flex flex-col h-full min-h-0 overflow-y-auto shadow-lg">
+        {/* ============ COLUMN 1 — CASE FILE (Full Height, own scroll) ============ */}
+        <div className="xl:col-span-3 rounded-2xl border border-cyan-500/30 bg-[#091122]/90 p-5 flex flex-col h-full min-h-0 overflow-y-auto shadow-lg">
           <div className="font-mono text-xs uppercase tracking-widest text-cyan-300 flex items-center gap-1.5 font-bold">
-            <ScrollText className="w-4 h-4 text-cyan-400" /> Case File #2026-VR
+            <ScrollText className="w-4 h-4 text-cyan-400" /> Case File
           </div>
-          <h3 className="font-dossier font-extrabold text-lg mt-2 leading-snug text-white">
+          <h3 className="font-dossier font-extrabold text-xl mt-2 leading-snug text-white">
             {story.caseTitle}
           </h3>
-          <div className="font-type italic text-emerald-300/90 text-sm mt-1.5">
-            "At 9:42 PM, the lights went out…"
-          </div>
+          {!!story.tagline && (
+            <div className="font-type italic text-emerald-300/90 text-base mt-1.5">
+              {story.tagline}
+            </div>
+          )}
 
-          <div className="mt-3 pt-3 border-t border-cyan-500/20">
-            <div className="font-mono text-[11px] uppercase tracking-widest text-cyan-400 font-semibold">
+          <div className="mt-4 pt-3 border-t border-cyan-500/20">
+            <div className="font-mono text-xs uppercase tracking-widest text-cyan-400 font-semibold">
               Victim
             </div>
-            <p className="text-sm text-[#e2e8f0] mt-1 leading-relaxed">{story.victim}</p>
+            <p className="text-base text-[#e2e8f0] mt-1 leading-relaxed">{story.victim}</p>
           </div>
 
-          <div className="mt-3 pt-3 border-t border-cyan-500/20">
-            <div className="font-mono text-[11px] uppercase tracking-widest text-cyan-400 font-semibold">
-              Brief
+          <div className="mt-4 pt-3 border-t border-cyan-500/20">
+            <div className="font-mono text-xs uppercase tracking-widest text-cyan-400 font-semibold">
+              Case Summary
             </div>
-            <p className="text-xs text-[#8e9cb5] mt-1 leading-relaxed">{story.storyText}</p>
+            <p className="text-sm text-[#aeb9cc] mt-1.5 leading-relaxed">{story.storyText}</p>
           </div>
 
           <div className="mt-auto pt-3 border-t border-cyan-500/20">
             <div className="font-mono text-[11px] uppercase tracking-widest text-cyan-400 font-semibold">
-              Detective Protocol
+              Tips for Detectives
             </div>
             <ul className="text-[11px] text-[#8e9cb5] mt-1.5 space-y-1 font-mono leading-relaxed list-disc ml-4">
-              <li>Pick a suspect, ask sharp questions.</li>
-              <li>Evasive answers hide clues — confront contradictions.</li>
-              <li>One charge-sheet. Make it count.</li>
+              <li>Pick a person and ask clear questions.</li>
+              <li>People describe what happened — look for things that do not match.</li>
+              <li>Clues are indirect — think carefully before submitting your answer.</li>
             </ul>
           </div>
         </div>
 
-        {/* ============ COLUMN 2 — CHAT (Suspects List + Chat Window) ============ */}
+        {/* ============ COLUMN 2 — CHAT (Characters ABOVE the chat window) ============ */}
         <div className="xl:col-span-6 rounded-2xl border border-cyan-500/30 bg-[#091122]/90 overflow-hidden flex flex-col h-full min-h-0 shadow-2xl">
-          <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden">
-            {/* Inner Left — Suspects List */}
-            <div className="md:w-52 shrink-0 border-b md:border-b-0 md:border-r border-cyan-500/20 bg-[#040814]/80 p-2.5 flex flex-col overflow-y-auto gap-2">
-              <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-300 font-bold flex items-center gap-1.5 px-1 pb-1">
-                <Users className="w-3.5 h-3.5 text-cyan-400" /> Persons of Interest
-              </div>
-              <div className="flex md:flex-col flex-row overflow-x-auto gap-1.5 flex-1">
-                {story.suspects.map((s: any) => {
-                  const n = qCountOf(s.id);
-                  const active = suspect === s.id;
-                  return (
-                    <button
-                      key={s.id}
-                      onClick={() => {
-                        soundFX.playClick();
-                        setSuspect(s.id);
-                      }}
-                      className={`min-w-[180px] md:min-w-0 text-left p-2.5 rounded-xl border transition-all flex items-center gap-2.5 cursor-pointer ${
+          {/* Persons of Interest — horizontal strip above the chat */}
+          <div className="shrink-0 border-b border-cyan-500/20 bg-[#040814]/80 px-2.5 pt-2 pb-2.5">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-300 font-bold flex items-center gap-1.5 px-1">
+              <Users className="w-3.5 h-3.5 text-cyan-400" /> People to question — select someone to talk to
+            </div>
+            <div className="flex flex-row overflow-x-auto gap-1.5 mt-1.5 pb-0.5">
+              {story.suspects.map((s: any) => {
+                const n = qCountOf(s.id);
+                const active = effSuspect === s.id;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      soundFX.playClick();
+                      setSuspect(s.id);
+                    }}
+                    className={`min-w-[170px] flex-1 text-left p-2 rounded-xl border transition-all flex items-center gap-2 cursor-pointer ${
+                      active
+                        ? 'border-emerald-400/60 bg-emerald-500/15 glow-live text-white'
+                        : 'border-cyan-500/20 bg-[#091122]/70 hover:border-cyan-400/50 text-[#8e9cb5]'
+                    }`}
+                  >
+                    <span
+                      className={`w-9 h-9 rounded-lg border flex items-center justify-center font-dossier font-black text-base shrink-0 ${
                         active
-                          ? 'border-emerald-400/60 bg-emerald-500/15 glow-live text-white'
-                          : 'border-cyan-500/20 bg-[#091122]/70 hover:border-cyan-400/50 text-[#8e9cb5]'
+                          ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-300'
+                          : 'border-cyan-500/30 bg-[#10192e] text-cyan-300'
                       }`}
                     >
+                      {s.name?.[0]}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-dossier font-bold text-xs truncate text-white">
+                        {s.name}
+                      </span>
+                      <span className="block font-mono text-[10px] text-[#8e9cb5] truncate">
+                        {s.role}
+                      </span>
                       <span
-                        className={`w-9 h-9 rounded-lg border flex items-center justify-center font-dossier font-black text-base shrink-0 ${
-                          active
-                            ? 'border-emerald-400/60 bg-emerald-500/20 text-emerald-300'
-                            : 'border-cyan-500/30 bg-[#10192e] text-cyan-300'
+                        className={`inline-block mt-0.5 font-mono text-[9px] px-1.5 py-0.2 rounded-full border ${
+                          n > 0
+                            ? 'bg-emerald-500/10 border-emerald-400/40 text-emerald-300'
+                            : 'bg-[#040814] border-cyan-500/20 text-[#52637a]'
                         }`}
                       >
-                        {s.name?.[0]}
+                        {n} question{n === 1 ? '' : 's'}
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-dossier font-bold text-xs truncate text-white">
-                          {s.name}
-                        </span>
-                        <span className="block font-mono text-[10px] text-[#8e9cb5] truncate">
-                          {s.role}
-                        </span>
-                        <span
-                          className={`inline-block mt-0.5 font-mono text-[9px] px-1.5 py-0.2 rounded-full border ${
-                            n > 0
-                              ? 'bg-emerald-500/10 border-emerald-400/40 text-emerald-300'
-                              : 'bg-[#040814] border-cyan-500/20 text-[#52637a]'
-                          }`}
-                        >
-                          {n} question{n === 1 ? '' : 's'}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
-            {/* Inner Right — Chat Window */}
-            <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
+          {/* Chat Window — full width */}
+          <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
               <div className="bg-[#040814]/90 px-3.5 py-2 border-b border-cyan-500/20 flex items-center justify-between gap-2 flex-wrap shrink-0">
                 <span className="font-dossier font-bold text-sm text-white">
                   {activeSuspect?.name}{' '}
@@ -450,15 +466,15 @@ export default function DetectiveGame({
                     </span>
                   )}
                   <span className="font-mono text-[10px] px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 flex items-center gap-1 font-bold">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> REC ·{' '}
-                    {qCountOf(suspect)}
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" /> Q:{' '}
+                    {qCountOf(effSuspect)}
                   </span>
                 </span>
               </div>
 
               {/* Chat Messages */}
               <div ref={scrollRef} className="flex-1 overflow-y-auto p-3.5 space-y-2.5 min-h-0">
-                {(chats[suspect] || []).map((m, i) => (
+                {(chats[effSuspect] || []).map((m, i) => (
                   <div
                     key={i}
                     className={`max-w-[90%] p-3 rounded-2xl text-xs sm:text-sm leading-relaxed animate-fadeIn ${
@@ -468,20 +484,20 @@ export default function DetectiveGame({
                     }`}
                   >
                     <div className="font-mono text-[9px] uppercase tracking-widest mb-1 opacity-60">
-                      {m.sender === 'user' ? '◆ Detective (you)' : `◇ ${activeSuspect?.name}`}
+                      {m.sender === 'user' ? '◆ You' : `◇ ${activeSuspect?.name}`}
                     </div>
                     {m.text}
                   </div>
                 ))}
-                {!(chats[suspect] || []).length && !busy && (
+                {!(chats[effSuspect] || []).length && !busy && (
                   <div className="text-[#52637a] text-xs font-mono text-center pt-24">
-                    — ask your first question to {activeSuspect?.name} —
+                    — Ask your first question to {activeSuspect?.name} —
                   </div>
                 )}
                 {busy && (
                   <div className="max-w-[90%] mr-auto bg-[#040814] border border-cyan-500/20 rounded-2xl rounded-tl-sm px-4 py-2.5 animate-fadeIn">
                     <div className="font-mono text-[10px] uppercase tracking-widest mb-1 opacity-60 text-cyan-300">
-                      ◇ {activeSuspect?.name} is responding
+                      ◇ {activeSuspect?.name} is answering...
                     </div>
                     <span className="typing-dots">
                       <span className="typing-dot bg-emerald-400" />
@@ -502,7 +518,7 @@ export default function DetectiveGame({
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && ask()}
-                  placeholder={`Interrogate ${activeSuspect?.name}... (where? alibi? motive?)`}
+                  placeholder={`Ask ${activeSuspect?.name} something... (Where were you? What did you see?)`}
                 />
                 <button
                   onClick={ask}
@@ -513,7 +529,6 @@ export default function DetectiveGame({
                 </button>
               </div>
             </div>
-          </div>
         </div>
 
         {/* ============ COLUMN 3 — EVIDENCE (Upper) + NOTES & ACCUSATION (Lower) ============ */}
@@ -521,7 +536,7 @@ export default function DetectiveGame({
           {/* Evidence Vault */}
           <div className="rounded-2xl border border-cyan-500/30 bg-[#091122]/90 p-3 flex flex-col overflow-hidden shrink-0 max-h-[35%] shadow-lg">
             <div className="inline-flex px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-400/30 font-mono text-[11px] text-cyan-300 font-bold">
-              ⚡ Evidence Vault ({clues.length}/{story.clues.length})
+              ⚡ Clues Discovered ({clues.length}/{story.clues.length})
             </div>
             <ul className="mt-2 space-y-1.5 overflow-y-auto pr-1 flex-1">
               {story.clues.map((c: any, i: number) => {
@@ -545,10 +560,10 @@ export default function DetectiveGame({
                       >
                         {found ? `✓ CLUE #${i + 1}` : `CLUE #${i + 1}`}
                       </span>
-                      {!found && <span className="font-mono text-[9px] text-[#52637a]">sealed</span>}
+                      {!found && <span className="font-mono text-[9px] text-[#52637a]">locked</span>}
                     </div>
                     <div className={`font-bold mt-0.5 ${found ? 'text-white' : 'text-[#52637a]'}`}>
-                      {found ? c.title : '??? — interrogate to uncover'}
+                      {found ? c.title : '??? — ask questions to discover'}
                     </div>
                     {found && <div className="text-[#8e9cb5] text-[10px] mt-0.5">{c.description}</div>}
                   </li>
@@ -560,7 +575,7 @@ export default function DetectiveGame({
           {/* Detective Notes & Final Accusation */}
           <div className="flex-1 min-h-0 rounded-2xl border border-cyan-500/30 bg-[#091122]/90 p-3 flex flex-col overflow-y-auto gap-2 shadow-lg">
             <div className="font-mono text-[10px] uppercase tracking-widest text-cyan-300 font-bold">
-              Detective Notes
+              Your Notes
             </div>
             <textarea
               rows={3}
@@ -569,7 +584,7 @@ export default function DetectiveGame({
               onChange={(e) => setNotes(e.target.value)}
               onBlur={saveNotes}
               disabled={readOnly}
-              placeholder="Who had a motive? Who benefits? Where was everyone at 9:42?"
+              placeholder="Write your notes: Who had a reason? Where was each person? What seems suspicious?"
             />
 
             {/* Final Accusation */}
@@ -578,7 +593,7 @@ export default function DetectiveGame({
               style={{ display: readOnly ? 'none' : undefined }}
             >
               <div className="font-mono text-[10px] uppercase tracking-widest text-amber-200 flex items-center gap-1.5 font-bold">
-                <Gavel className="w-3.5 h-3.5" /> Final Accusation — One Chance
+                <Gavel className="w-3.5 h-3.5" /> Final Decision — One Chance
               </div>
               <select
                 className="mt-1.5 w-full px-2.5 py-1.5 rounded-lg bg-[#091122] border border-amber-300/30 text-xs focus:border-amber-200 outline-none text-[#ece9f7]"
@@ -593,13 +608,13 @@ export default function DetectiveGame({
               </select>
               <input
                 className="mt-1.5 w-full px-2.5 py-1.5 rounded-lg bg-[#091122] border border-amber-300/30 text-xs focus:border-amber-200 outline-none placeholder:text-[#52637a] text-[#ece9f7]"
-                placeholder="Why would they do it?"
+                placeholder="Why did they do it? (Motive / Reason)"
                 value={accuse.motive}
                 onChange={(e) => setAccuse({ ...accuse, motive: e.target.value })}
               />
               <input
                 className="mt-1.5 w-full px-2.5 py-1.5 rounded-lg bg-[#091122] border border-amber-300/30 text-xs focus:border-amber-200 outline-none placeholder:text-[#52637a] text-[#ece9f7]"
-                placeholder="What happened, step by step..."
+                placeholder="Explain what happened, step by step..."
                 value={accuse.explanation}
                 onChange={(e) => setAccuse({ ...accuse, explanation: e.target.value })}
               />
@@ -615,7 +630,7 @@ export default function DetectiveGame({
                 disabled={busy}
                 className="mt-2 w-full py-2.5 rounded-xl font-mono font-bold text-xs uppercase bg-gradient-to-r from-amber-400 to-yellow-300 text-black hover:brightness-110 disabled:opacity-50 glow-verdict cursor-pointer transition-all flex items-center justify-center gap-1.5"
               >
-                <Search className="w-3.5 h-3.5" /> Submit Solution &amp; Finish
+                <Search className="w-3.5 h-3.5" /> Submit Final Decision &amp; Finish
               </button>
             </div>
           </div>

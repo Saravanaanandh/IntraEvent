@@ -1,10 +1,11 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { Participant, ChatMessage, BeliefState, CaseConfig } from '../types.js';
-import { DEFAULT_LIE_IMAGE, estimateTokens, generateLieResponse, evaluateLieConversation, simulateLieResponse, isGeminiConfigured, scoreLieEfficiency, LIE_MIN_TURNS, LIE_TIME_LIMIT_SEC, LIE_MAX_PROMPTS, DEFAULT_TRUTH_LABEL, DEFAULT_TRUTH_KEYWORDS, DEFAULT_FALSE_LABEL, DEFAULT_FALSE_KEYWORDS } from './lieEngine.js';
-import { DEFAULT_CASE, suspectReply, detectClues, extractClueTags, stripClueTags, scoreDetective } from './detectiveEngine.js';
+import { estimateTokens, generateLieResponse, evaluateLieConversation, simulateLieResponse, isGeminiConfigured, scoreLieEfficiency, LIE_MIN_TURNS, LIE_TIME_LIMIT_SEC, LIE_MAX_PROMPTS, updateActiveLieConfig } from './lieEngine.js';
+import { DEFAULT_CASE, STORIES, DEFAULT_STORY_ID, getStory, suspectReply, detectClues, extractClueTags, stripClueTags, scoreDetective } from './detectiveEngine.js';
+import { storyMeta } from './stories.js';
 import { generateLieReplyOllama, refereeLieOllama, defaultOllamaModel } from './ollamaService.js';
-import { persistParticipant, persistLieSession, persistDetSession, persistConfig, wipeMongo, loadAllFromMongo, loadParticipantDoc, loadParticipantByRegNo, loadLieDoc, loadDetDoc } from './db.js';
+import { persistParticipant, persistLieSession, persistDetSession, persistConfig, wipeMongo, loadAllFromMongo, loadParticipantDoc, loadParticipantByRegNo, loadLieDoc, loadDetDoc, loadConfigDoc } from './db.js';
 
 export const ADMIN_EMAIL = 'admin@gces.in';
 export const ADMIN_PASSWORD = 'Admin@GCES123';
@@ -14,22 +15,28 @@ export const ADMIN_TOKEN = 'admin-token-gces-finalevent';
 // helper (Mongo write-through); boot hydrates via hydrateStore().
 // No local files are read or written.
 
-interface LieSession { participantId: string; messages: ChatMessage[]; belief: BeliefState; promptsUsed: number; startedAt: number; finished: boolean; }
-interface DetSession { participantId: string; chats: Record<string, ChatMessage[]>; qCounts: Record<string, number>; cluesFound: string[]; suspectsQ: string[]; notes: string; startedAt: number; language: string; }
+interface LieSession { participantId: string; messages: ChatMessage[]; belief: BeliefState; promptsUsed: number; startedAt: number; finished: boolean; cfgVersion?: number; }
+interface DetSession { participantId: string; chats: Record<string, ChatMessage[]>; qCounts: Record<string, number>; cluesFound: string[]; suspectsQ: string[]; notes: string; startedAt: number; language: string; storyId?: string; }
 interface Store {
   participants: Record<string, Participant>;
   lieSessions: Record<string, LieSession>;
   detSessions: Record<string, DetSession>;
-  config: { lieImageUrl: string; truthLabel: string; truthKeywords: string[]; falseLabel: string; falseKeywords: string[]; caseConfig: CaseConfig; eventName: string; round2DurationSec: number };
+  config: { lieImageUrl: string; truthLabel: string; truthKeywords: string[]; falseLabel: string; falseKeywords: string[]; caseConfig: CaseConfig; eventName: string; round2DurationSec: number; activeStoryId: string; lieVersion: number };
 }
 
-export const ROUND2_DEFAULT_DURATION_SEC = 45 * 60; // 45-minute Round-2 timer
+export const ROUND2_DEFAULT_DURATION_SEC = 60 * 60; // 1-hour Round-2 timer (60 minutes)
 
 function defaultStore(): Store {
-  return { participants: {}, lieSessions: {}, detSessions: {}, config: { lieImageUrl: DEFAULT_LIE_IMAGE, truthLabel: DEFAULT_TRUTH_LABEL, truthKeywords: [...DEFAULT_TRUTH_KEYWORDS], falseLabel: DEFAULT_FALSE_LABEL, falseKeywords: [...DEFAULT_FALSE_KEYWORDS], caseConfig: DEFAULT_CASE, eventName: 'Final Event — AI Lying + AI Detective', round2DurationSec: ROUND2_DEFAULT_DURATION_SEC } };
+  return { participants: {}, lieSessions: {}, detSessions: {}, config: { lieImageUrl: '', truthLabel: '', truthKeywords: [], falseLabel: '', falseKeywords: [], caseConfig: DEFAULT_CASE, eventName: 'Final Event — AI Lying + AI Detective', round2DurationSec: ROUND2_DEFAULT_DURATION_SEC, activeStoryId: DEFAULT_STORY_ID, lieVersion: 1 } };
 }
 
 let store: Store = defaultStore();
+updateActiveLieConfig({
+  label: store.config.truthLabel,
+  keywords: store.config.truthKeywords,
+  falseLabel: store.config.falseLabel,
+  falseKeywords: store.config.falseKeywords,
+});
 
 // SSE clients
 const sseClients: { res: any }[] = [];
@@ -66,7 +73,15 @@ export async function hydrateStore() {
     for (const [k, v] of Object.entries(docs.detSessions)) store.detSessions[k] = v;
     if (docs.config) {
       const d = defaultStore().config;
-      store.config = { ...d, ...docs.config, caseConfig: (docs.config as any).caseConfig || d.caseConfig };
+      store.config = { ...d, ...docs.config, caseConfig: (docs.config as any).caseConfig || getStory((docs.config as any).activeStoryId || DEFAULT_STORY_ID).case };
+      if (!(store.config as any).activeStoryId) (store.config as any).activeStoryId = DEFAULT_STORY_ID;
+      if (!(store.config as any).lieVersion) (store.config as any).lieVersion = 1;
+      updateActiveLieConfig({
+        label: store.config.truthLabel,
+        keywords: store.config.truthKeywords,
+        falseLabel: store.config.falseLabel,
+        falseKeywords: store.config.falseKeywords,
+      });
     }
     console.log(`[mongo] hydrated ${Object.keys(docs.participants).length} users + conversations${docs.config ? ' + event config' : ''}.`);
   } catch {
@@ -74,19 +89,56 @@ export async function hydrateStore() {
   }
 }
 
+// Admin updates must go LIVE on every instance, not just the one that served
+// the admin click. Config is re-read from Mongo (single-doc read) ahead of
+// every config-dependent route, so label/image/story switches propagate
+// within one request on serverless instances too.
+async function refreshConfig() {
+  try {
+    const doc = await loadConfigDoc();
+    if (!doc) return;
+    const d = defaultStore().config;
+    store.config = { ...d, ...store.config, ...doc, caseConfig: (doc as any).caseConfig || getStory((doc as any).activeStoryId || (store.config as any).activeStoryId || DEFAULT_STORY_ID).case };
+    if (!(store.config as any).activeStoryId) (store.config as any).activeStoryId = DEFAULT_STORY_ID;
+    if (!(store.config as any).lieVersion) (store.config as any).lieVersion = 1;
+    updateActiveLieConfig({
+      label: store.config.truthLabel,
+      keywords: store.config.truthKeywords,
+      falseLabel: store.config.falseLabel,
+      falseKeywords: store.config.falseKeywords,
+    });
+  } catch {
+    /* keep in-memory config on read failure */
+  }
+}
+
+function freshLieSession(pid: string): LieSession {
+  const s: LieSession = { participantId: pid, messages: [], belief: { initialBelief: store.config.falseLabel, currentBelief: store.config.falseLabel, isConvinced: false }, promptsUsed: 0, startedAt: Date.now(), finished: false, cfgVersion: (store.config as any).lieVersion || 1 };
+  store.lieSessions[pid] = s;
+  persistLieSession(s);
+  return s;
+}
+
+function freshDetSession(pid: string) {
+  const s: DetSession = { participantId: pid, chats: {}, qCounts: {}, cluesFound: [], suspectsQ: [], notes: '', startedAt: Date.now(), language: 'english', storyId: (store.config as any).activeStoryId || DEFAULT_STORY_ID };
+  store.detSessions[pid] = s;
+  persistDetSession(s);
+  return s;
+}
+
 // Safety net: if an AI reply is byte-identical to its previous reply, nudge
 // the conversation forward with a rotating follow-up instead of echoing.
 const LIE_REPEAT_TAILS = [
   'What specifically in the image supports that?',
   'Point me to one concrete visual detail.',
-  'How do you explain the peel and stem, then?',
+  'Describe one concrete visual detail that proves it.',
   'Give me the mechanism, not just the claim.',
 ];
 const DETECTIVE_REPEAT_TAILS = [
-  'What were you doing at 9:42 exactly?',
-  'Who else was near the breaker panel that night?',
+  'What were you doing at the exact time it happened?',
+  'Who else was near the scene that night?',
   'Walk me through that night minute by minute.',
-  'What are you not telling me about the blackout?',
+  'What are you not telling me about that night?',
 ];
 function breakRepeat(reply: string, lastAiText: string | undefined, turn: number, tails: string[] = LIE_REPEAT_TAILS): string {
   if (!lastAiText || reply.trim() !== lastAiText.trim()) return reply;
@@ -222,27 +274,37 @@ export function buildApp() {
 
   // ---------- Round 1: Lie (resumes unfinished session after interrupts) ----------
   app.post('/api/lie/start', async (req, res) => {
+    await refreshConfig();
     const { participantId } = req.body || {};
     const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Participant not found. Login again.' });
     if (p.round1Completed) return res.status(403).json({ error: 'Round 1 already completed. Round 2 is unlocked.' });
     const existing = (await ensureLie(p.id)) && store.lieSessions[p.id];
-    if (existing && !existing.finished) {
+    const liveVersion = (store.config as any).lieVersion || 1;
+    if (existing && !existing.finished && (existing.cfgVersion || 1) === liveVersion) {
       // Resume — do NOT wipe conversation after an interrupt.
       return res.json({ resumed: true, promptsUsed: existing.promptsUsed, imageUrl: store.config.lieImageUrl, messages: existing.messages, startedAt: existing.startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
     }
-    store.lieSessions[p.id] = { participantId: p.id, messages: [], belief: { initialBelief: store.config.falseLabel, currentBelief: store.config.falseLabel, isConvinced: false }, promptsUsed: 0, startedAt: Date.now(), finished: false };
-    persistLieSession(store.lieSessions[p.id]);
-    res.json({ resumed: false, promptsUsed: 0, imageUrl: store.config.lieImageUrl, messages: [], startedAt: store.lieSessions[p.id].startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
+    // New session, or admin changed image/labels since (stale sessions restart
+    // on the NEW exhibit so old labels never leak into the chat again).
+    const fresh = freshLieSession(p.id);
+    res.json({ resumed: false, promptsUsed: 0, imageUrl: store.config.lieImageUrl, messages: [], startedAt: fresh.startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
   });
 
   app.post('/api/lie/message', async (req, res) => {
+    await refreshConfig();
     const { participantId, prompt } = req.body || {};
     const p = await ensureParticipantById(String(participantId));
-    const sess = await ensureLie(String(participantId));
+    let sess = await ensureLie(String(participantId));
     if (!p || !sess) return res.status(404).json({ error: 'Start Round 1 first.' });
     if (sess.finished) return res.status(403).json({ error: 'Round 1 finished. Please finish/evaluate.' });
-    // 30-minute round timer — enforced server-side.
+    // Admin changed the exhibit/labels mid-round: migrate this session onto the
+    // NEW labels automatically so stale values can never appear in chat.
+    const liveVersion = (store.config as any).lieVersion || 1;
+    if ((sess.cfgVersion || 1) !== liveVersion) {
+      sess = freshLieSession(p.id);
+    }
+    // 15-minute round timer — enforced server-side.
     if (Date.now() - sess.startedAt > LIE_TIME_LIMIT_SEC * 1000) {
       return res.status(403).json({ error: 'TIME_EXPIRED', message: 'Time expired — submitting your round now.' });
     }
@@ -273,7 +335,7 @@ export function buildApp() {
           r = await generateLieResponse(history, text, turn, sess.belief, store.config.lieImageUrl, truth);
           engine = 'gemini';
         } else {
-          const s0 = simulateLieResponse(history, text, turn, sess.belief);
+          const s0 = simulateLieResponse(history, text, turn, sess.belief, truth);
           r = { ...s0, latencyMs: 0 };
         }
       }
@@ -281,7 +343,7 @@ export function buildApp() {
       r = await generateLieResponse(history, text, turn, sess.belief, store.config.lieImageUrl, truth);
       engine = 'gemini';
     } else {
-      const s0 = simulateLieResponse(history, text, turn, sess.belief);
+      const s0 = simulateLieResponse(history, text, turn, sess.belief, truth);
       r = { ...s0, latencyMs: 0 };
     }
     const replyText = breakRepeat(r.text, lastAiText, turn);
@@ -330,29 +392,43 @@ export function buildApp() {
 
   // ---------- Round 2: Detective (resumes unfinished session after interrupts) ----------
   app.post('/api/detective/start', async (req, res) => {
+    await refreshConfig();
     const { participantId } = req.body || {};
     const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Login again.' });
     if (!p.round1Completed) return res.status(403).json({ error: 'Complete Round 1 (AI-Lying) first to unlock Round 2.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 already completed.' });
     const casePayload = publicCase();
+    const liveStory = (store.config as any).activeStoryId || DEFAULT_STORY_ID;
     const existing = await ensureDet(p.id);
-    if (existing) {
+    if (existing && (existing.storyId || DEFAULT_STORY_ID) === liveStory) {
       // Resume — restore chats, clues and notes, do NOT wipe after an interrupt.
       return res.json({ resumed: true, case: casePayload, cluesFound: existing.cluesFound, chats: existing.chats, qCounts: existing.qCounts, notes: existing.notes, startedAt: existing.startedAt, roundDurationSec: store.config.round2DurationSec, timeElapsedSec: Math.round((Date.now() - existing.startedAt) / 1000) });
     }
-    store.detSessions[p.id] = { participantId: p.id, chats: {}, qCounts: {}, cluesFound: [], suspectsQ: [], notes: '', startedAt: Date.now(), language: 'english' };
-    persistDetSession(store.detSessions[p.id]);
-    res.json({ resumed: false, case: casePayload, cluesFound: [], chats: {}, qCounts: {}, notes: '', startedAt: store.detSessions[p.id].startedAt, roundDurationSec: store.config.round2DurationSec, timeElapsedSec: 0 });
+    // New session, or admin switched the story since (old suspects/chats belong
+    // to the previous story — restart cleanly on the NEW one).
+    const fresh = freshDetSession(p.id);
+    res.json({ resumed: false, case: casePayload, cluesFound: [], chats: {}, qCounts: {}, notes: '', startedAt: fresh.startedAt, roundDurationSec: store.config.round2DurationSec, timeElapsedSec: 0 });
   });
 
   app.post('/api/detective/chat', async (req, res) => {
+    await refreshConfig();
     const { participantId, suspectId, message } = req.body || {};
     const p = await ensureParticipantById(String(participantId));
-    const s = await ensureDet(String(participantId));
+    let s = await ensureDet(String(participantId));
     if (!p || !s) return res.status(404).json({ error: 'Start Round 2 first.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 completed.' });
-    // 45-minute round timer — enforced server-side (auto-submit on expiry).
+    // Story switched mid-session: migrate onto the NEW story's characters.
+    const liveStory = (store.config as any).activeStoryId || DEFAULT_STORY_ID;
+    if ((s.storyId || DEFAULT_STORY_ID) !== liveStory) {
+      s = freshDetSession(p.id);
+    }
+    // Stale client asking about a suspect from a previous story: refuse loudly
+    // instead of leaking a wrong-character reply.
+    if (!store.config.caseConfig.suspects.some((x) => x.id === String(suspectId))) {
+      return res.status(400).json({ error: 'STORY_CHANGED', message: 'The active case changed — restart the round to meet the new persons of interest.' });
+    }
+    // 1-hour round timer — enforced server-side (auto-submit on expiry).
     if (Date.now() - s.startedAt > store.config.round2DurationSec * 1000) {
       return res.status(403).json({ error: 'TIME_EXPIRED', message: 'Time expired — submitting your charge-sheet now.' });
     }
@@ -379,7 +455,7 @@ export function buildApp() {
     const tagged = extractClueTags(result.text, validClueIds);
     const reply = breakRepeat(stripClueTags(result.text), prevAi, qCount, DETECTIVE_REPEAT_TAILS);
     s.chats[String(suspectId)].push({ id: `a${Date.now()}`, sender: 'ai', text: reply, timestamp: now });
-    const newClues = [...tagged, ...detectClues(reply, [...s.cluesFound, ...tagged])].filter((c, i, a) => a.indexOf(c) === i);
+    const newClues = [...tagged, ...detectClues(reply, [...s.cluesFound, ...tagged], store.config.caseConfig)].filter((c, i, a) => a.indexOf(c) === i);
     for (const c of newClues) if (!s.cluesFound.includes(c)) s.cluesFound.push(c);
     persistDetSession(s);
     res.json({ reply, newClues, cluesFound: s.cluesFound, engine: result.engine });
@@ -482,6 +558,7 @@ export function buildApp() {
 
   // Read-only history for participants (works even after both rounds are sealed).
   app.get('/api/participant/history', async (req, res) => {
+    await refreshConfig();
     const p = await ensureParticipantById(String((req.query as any).participantId || ''));
     if (!p) return res.status(404).json({ error: 'Participant not found.' });
     const lie = (await ensureLie(p.id)) || null;
@@ -495,10 +572,11 @@ export function buildApp() {
         : null,
     });
   });
-  app.get('/api/admin/config', requireAdmin, (_req, res) => {
-    res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords, round2DurationSec: store.config.round2DurationSec, caseConfig: store.config.caseConfig });
+  app.get('/api/admin/config', requireAdmin, async (_req, res) => {
+    await refreshConfig();
+    res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords, round2DurationSec: store.config.round2DurationSec, caseConfig: store.config.caseConfig, activeStoryId: (store.config as any).activeStoryId || DEFAULT_STORY_ID, lieVersion: (store.config as any).lieVersion || 1, stories: storyMeta() });
   });
-  app.post('/api/admin/config/lie-image', requireAdmin, (req, res) => {
+  app.post('/api/admin/config/lie-image', requireAdmin, async (req, res) => {
     const url = String(req.body?.imageUrl || '').trim();
     if (!url.startsWith('http') && !url.startsWith('data:')) return res.status(400).json({ error: 'Enter valid http(s) or data: image URL.' });
     store.config.lieImageUrl = url;
@@ -522,10 +600,31 @@ export function buildApp() {
       const keys = raw.map((k: any) => String(k || '').trim().toLowerCase()).filter(Boolean);
       if (keys.length) store.config.falseKeywords = keys;
     }
-    persistConfig(store.config); broadcast('config_updated', { lieImageUrl: url });
-    res.json({ ok: true, lieImageUrl: url, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords });
+    // New exhibit/labels = new version: every unfinished lie session migrates
+    // onto these values on next start/message (old labels never resurface).
+    (store.config as any).lieVersion = ((store.config as any).lieVersion || 1) + 1;
+    updateActiveLieConfig({
+      label: store.config.truthLabel,
+      keywords: store.config.truthKeywords,
+      falseLabel: store.config.falseLabel,
+      falseKeywords: store.config.falseKeywords,
+    });
+    await persistConfig(store.config); broadcast('config_updated', { lieImageUrl: url });
+    res.json({ ok: true, lieImageUrl: url, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords, lieVersion: (store.config as any).lieVersion });
   });
-  app.put('/api/admin/config/story', requireAdmin, (req, res) => {
+  // Story selector: one preset per batch. Suspects + clues + culprit + scoring
+  // vocabulary swap TOGETHER so the AI system prompt always matches the story.
+  app.post('/api/admin/config/story-select', requireAdmin, async (req, res) => {
+    await refreshConfig();
+    const id = String(req.body?.storyId || '');
+    const preset = STORIES.find((s) => s.id === id);
+    if (!preset) return res.status(400).json({ error: 'Unknown story. Valid: ' + STORIES.map((s) => s.id).join(', ') });
+    store.config.caseConfig = JSON.parse(JSON.stringify(preset.case));
+    (store.config as any).activeStoryId = preset.id;
+    await persistConfig(store.config); broadcast('config_updated', { caseTitle: preset.case.caseTitle, activeStoryId: preset.id });
+    res.json({ ok: true, activeStoryId: preset.id, caseConfig: store.config.caseConfig });
+  });
+  app.put('/api/admin/config/story', requireAdmin, async (req, res) => {
     const b = req.body || {};
     const cc: CaseConfig = {
       caseTitle: String(b.caseTitle || store.config.caseConfig.caseTitle),
@@ -539,7 +638,13 @@ export function buildApp() {
     store.config.caseConfig = cc;
     if (b.eventName) store.config.eventName = String(b.eventName);
     if (b.round2DurationSec) store.config.round2DurationSec = Number(b.round2DurationSec) || store.config.round2DurationSec;
-    persistConfig(store.config); broadcast('config_updated', { caseTitle: cc.caseTitle });
+    // Optional story lineage marker (e.g. 'varadarajan' while keeping custom
+    // text): lets pre-existing sessions resume instead of migrating.
+    if (typeof b.activeStoryId === 'string' && b.activeStoryId) {
+      const known = STORIES.some((s) => s.id === b.activeStoryId);
+      if (known || b.activeStoryId === 'custom') (store.config as any).activeStoryId = b.activeStoryId;
+    }
+    await persistConfig(store.config); broadcast('config_updated', { caseTitle: cc.caseTitle });
     res.json({ ok: true, caseConfig: cc });
   });
   app.post('/api/admin/reset', requireAdmin, async (_req, res) => {

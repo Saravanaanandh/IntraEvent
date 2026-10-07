@@ -23,7 +23,7 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
             PROMPT THEORY
           </h2>
           <p className="font-mono text-xs sm:text-sm text-cyan-300/70 mt-1">
-            Complete Round 1 (30m) to unlock Round 2 (45m).
+            Complete Round 1 (15m) to unlock Round 2 (1h).
           </p>
         </div>
 
@@ -32,7 +32,7 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
           <div className="p-6 rounded-3xl bg-[#091122]/90 border border-cyan-500/30 shadow-xl glow-live backdrop-blur-md">
             <div className="flex items-center justify-between">
               <span className="font-mono text-[11px] uppercase tracking-widest text-cyan-300 flex items-center gap-1.5 font-bold">
-                <Zap className="w-4 h-4 text-cyan-400" /> Round 1 · 30 Min
+                <Zap className="w-4 h-4 text-cyan-400" /> Round 1 · 15 Min
               </span>
               {r1
                 ? <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> SEALED</span>
@@ -40,7 +40,7 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
             </div>
             <h3 className="font-display font-black text-xl mt-2 tracking-wider text-white">AI-LYING</h3>
             <p className="text-xs text-[#8f9eb5] mt-1 font-mono leading-relaxed">
-              Chat freely within 30 minutes. Break through the AI defense to reveal the true label.
+              Chat freely within 15 minutes. Break through the AI defense to reveal the true label.
             </p>
             <button onClick={() => { soundFX.playClick(); onStartLie(); }} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${r1 ? 'bg-[#10192e] text-cyan-200 hover:bg-[#182645]' : 'btn-prompt-theory'}`}>
               {r1 ? 'VIEW ROUND 1' : <><Zap className="w-4 h-4" /> START ROUND 1</>}
@@ -51,7 +51,7 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
           <div className={`p-6 rounded-3xl bg-[#091122]/90 shadow-xl backdrop-blur-md transition-all ${!r1 ? 'opacity-70 border border-[#1e293b]' : r2 ? 'border border-emerald-400/40 glow-live' : 'border border-cyan-400/40 glow-live'}`}>
             <div className="flex items-center justify-between">
               <span className="font-mono text-[11px] uppercase tracking-widest text-emerald-300 flex items-center gap-1.5 font-bold">
-                <Search className="w-4 h-4 text-emerald-400" /> Round 2 · 45 Min
+                <Search className="w-4 h-4 text-emerald-400" /> Round 2 · 1 Hour
               </span>
               {r2
                 ? <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> SEALED</span>
@@ -61,7 +61,7 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
             </div>
             <h3 className="font-dossier font-extrabold text-xl mt-2 text-white">THE HIDDEN MYSTERY</h3>
             <p className="text-xs text-[#8f9eb5] mt-1 font-mono leading-relaxed">
-              Interrogate 4 suspects, gather forensic clues, file the final charge-sheet. 45 minutes limit.
+              Question 4 suspects, discover indirect clues, submit your final answer. 1 hour time limit.
             </p>
             <button onClick={() => { soundFX.playClick(); onStartDetective(); }} disabled={!r1} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm cursor-pointer transition-all ${!r1 ? 'bg-[#10192e] text-[#64748b] cursor-not-allowed' : r2 ? 'bg-[#10192e] text-cyan-200 hover:bg-[#182645]' : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-[#041017] hover:brightness-110'}`}>
               {!r1 ? 'LOCKED - FINISH ROUND 1 FIRST' : r2 ? 'VIEW ROUND 2' : 'OPEN CASE FILE'}

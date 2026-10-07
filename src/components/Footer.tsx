@@ -24,7 +24,7 @@ export default function Footer() {
             <Zap className="w-3.5 h-3.5 text-fuchsia-300" /> Round 1
           </h4>
           <p className="text-xs text-[#8f86ad] mt-2 font-mono leading-relaxed">
-            1 image · open chat · 30-min timer ·<br />efficiency verdict
+            1 image · open chat · 15-min timer ·<br />efficiency verdict
           </p>
         </div>
         <div>
@@ -32,7 +32,7 @@ export default function Footer() {
             <Search className="w-3.5 h-3.5 text-emerald-300" /> Round 2
           </h4>
           <p className="text-xs text-[#8f86ad] mt-2 font-mono leading-relaxed">
-            4 suspects · forensic clues ·<br />1 charge-sheet
+            4 suspects · 1-hour timer ·<br />final decision
           </p>
         </div>
         <div>

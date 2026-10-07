@@ -69,12 +69,31 @@ export interface Suspect {
   gatedClues?: SuspectClue[]; // clues with trigger conditions (max 3 used)
 }
 
+export interface CaseClue {
+  id: string;
+  title: string;
+  weight: number; // >=15 critical, 1-14 supporting, 0 red herring
+  description: string;
+  keywords?: string[]; // detection keywords; derived from title+description when absent
+}
+
+// Per-story scoring vocabulary — SAME rubric for every story, different words.
+// Absent = Varadarajan defaults (original behaviour preserved).
+export interface CaseScoreKeywords {
+  interp: string[]; // reasoning/interpretation hits in notes+motive+explanation
+  motive: string[]; // accepted motive words in the accusation motive field
+  explanation: string[]; // accepted explanation words (>=2 hits scores)
+  time: string[]; // timeline words for the reasoning time bonus
+}
+
 export interface CaseConfig {
   caseTitle: string;
   victim: string;
   culpritId: string;
   storyText: string; // FULL truth — server/AI eyes only, never sent to participants
   publicBrief: string; // spoiler-free briefing: what happened, when, who was around
+  tagline?: string; // one-line quote shown on the case file panel
   suspects: Suspect[];
-  clues: { id: string; title: string; weight: number; description: string }[];
+  clues: CaseClue[];
+  scoreKeywords?: CaseScoreKeywords;
 }

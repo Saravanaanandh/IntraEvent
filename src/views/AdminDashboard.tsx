@@ -12,7 +12,8 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [truthKeywords, setTruthKeywords] = useState('');
   const [falseLabel, setFalseLabel] = useState('');
   const [falseKeywords, setFalseKeywords] = useState('');
-  const [story, setStory] = useState<any>(null);
+  const [stories, setStories] = useState<any[]>([]);
+  const [activeStoryId, setActiveStoryId] = useState('');
   const [msg, setMsg] = useState('');
 
   const token = getAdminToken() || '';
@@ -23,24 +24,15 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       const cRes = await fetch('/api/admin/config', { headers: auth });
       if (cRes.ok) {
         const c = await cRes.json();
-        if (c.lieImageUrl) {
-          setImageUrl((prev) => (document.activeElement?.tagName === 'INPUT' ? prev : c.lieImageUrl || ''));
-          if (document.activeElement?.tagName !== 'INPUT') {
-            setTruthLabel(c.truthLabel || '');
-            setTruthKeywords((c.truthKeywords || []).join(', '));
-            setFalseLabel(c.falseLabel || '');
-            setFalseKeywords((c.falseKeywords || []).join(', '));
-          }
+        if (document.activeElement?.tagName !== 'INPUT') {
+          setImageUrl(c.lieImageUrl || '');
+          setTruthLabel(c.truthLabel || '');
+          setTruthKeywords((c.truthKeywords || []).join(', '));
+          setFalseLabel(c.falseLabel || '');
+          setFalseKeywords((c.falseKeywords || []).join(', '));
         }
-        setStory((s: any) => s ?? {
-          caseTitle: c.caseTitle,
-          victim: c.victim,
-          storyText: c.storyText,
-          publicBrief: c.caseConfig?.publicBrief || '',
-          culpritId: c.caseConfig?.culpritId || '',
-          suspects: c.caseConfig?.suspects || [],
-          clues: c.caseConfig?.clues || [],
-        });
+        setStories(c.stories || []);
+        setActiveStoryId(c.activeStoryId || '');
       }
 
       const lRes = await fetch('/api/leaderboard', { headers: auth });
@@ -86,17 +78,24 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     setMsg(r.ok ? `✓ Ctrl+Lie config updated — insist "${d.falseLabel}", admit "${d.truthLabel}".` : d.error);
   }
 
-  async function saveStory() {
+  async function selectStory(id: string) {
     setMsg('');
-    const r = await fetch('/api/admin/config/story', {
-      method: 'PUT',
+    const r = await fetch('/api/admin/config/story-select', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json', ...auth },
-      body: JSON.stringify(story),
+      body: JSON.stringify({ storyId: id }),
     });
     const d = await r.json();
-    if (r.ok) soundFX.playSuccess();
-    else soundFX.playFail();
-    setMsg(r.ok ? '✓ Story / character config updated for Round 2.' : d.error);
+    if (r.ok) {
+      soundFX.playSuccess();
+      setActiveStoryId(d.activeStoryId);
+      const title = (stories.find((s: any) => s.id === d.activeStoryId)?.caseTitle) || d.activeStoryId;
+      setMsg(`✓ Round 2 story switched — "${title}". Suspects, clues, culprit and AI briefing updated together.`);
+    } else {
+      soundFX.playFail();
+      setMsg(d.error);
+    }
+    loadConfigAndStats();
   }
 
   async function resetAll() {
@@ -205,7 +204,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-emerald-400/40 text-xs focus:border-emerald-300 outline-none text-[#ece9f7]"
                       value={truthLabel}
                       onChange={(e) => setTruthLabel(e.target.value)}
-                      placeholder="e.g. a fresh yellow banana"
+                      placeholder="e.g. a cute white cat"
                     />
                   </div>
 
@@ -215,7 +214,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs font-code focus:border-fuchsia-400 outline-none text-[#ece9f7]"
                       value={truthKeywords}
                       onChange={(e) => setTruthKeywords(e.target.value)}
-                      placeholder="banana, bananas, plantain"
+                      placeholder="cat, cats, kitten"
                     />
                   </div>
 
@@ -225,7 +224,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-amber-200/40 text-xs focus:border-amber-200 outline-none text-[#ece9f7]"
                       value={falseLabel}
                       onChange={(e) => setFalseLabel(e.target.value)}
-                      placeholder="e.g. a shiny red apple"
+                      placeholder="e.g. a cute white dog"
                     />
                   </div>
 
@@ -235,7 +234,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                       className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs font-code focus:border-fuchsia-400 outline-none text-[#ece9f7]"
                       value={falseKeywords}
                       onChange={(e) => setFalseKeywords(e.target.value)}
-                      placeholder="apple, apples"
+                      placeholder="dog, dogs, puppy"
                     />
                   </div>
                 </div>
@@ -249,86 +248,68 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
               </button>
             </div>
 
-            {/* Round 2 Story & Characters Setup */}
+            {/* Round 2 Story Selector — one story per batch */}
             <div className="rounded-3xl border border-[#4a3670]/70 bg-[#150e28]/90 p-6 shadow-xl flex flex-col justify-between">
               <div>
                 <h3 className="font-mono text-xs uppercase tracking-widest text-amber-200 flex items-center gap-2 font-bold">
-                  <FileText className="w-4 h-4" /> Control — Round 2 Story &amp; Characters
+                  <FileText className="w-4 h-4" /> Control — Round 2 Story (one per batch)
                 </h3>
                 <p className="text-[11px] text-[#8f86ad] font-mono mt-1">
-                  Edit case title, victim, full story truth (AI internal), public briefing, and culprit ID.
+                  Select the story for the current batch. Characters, clues, culprit and AI briefing switch together.
                 </p>
 
-                {story && (
-                  <div className="space-y-3 mt-4">
-                    <div>
-                      <label className="text-[11px] font-mono text-amber-200 uppercase font-semibold">Case Title</label>
-                      <input
-                        className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]"
-                        value={story.caseTitle || ''}
-                        onChange={(e) => setStory({ ...story, caseTitle: e.target.value })}
-                        placeholder="Case title"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-mono text-amber-200 uppercase font-semibold">Victim</label>
-                      <input
-                        className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]"
-                        value={story.victim || ''}
-                        onChange={(e) => setStory({ ...story, victim: e.target.value })}
-                        placeholder="Victim name"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-mono text-amber-200 uppercase font-semibold">
-                        Full Truth (Server / AI Only — Never Shown to Players)
-                      </label>
-                      <textarea
-                        className="w-full mt-1 px-3 py-2 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]"
-                        rows={4}
-                        value={story.storyText || ''}
-                        onChange={(e) => setStory({ ...story, storyText: e.target.value })}
-                        placeholder="Full truth of how the incident unfolded..."
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-mono text-emerald-300 uppercase font-semibold">
-                        Public Briefing (Players See This)
-                      </label>
-                      <textarea
-                        className="w-full mt-1 px-3 py-2 rounded-xl bg-[#0a0614] border border-emerald-400/40 text-xs focus:border-emerald-300 outline-none text-[#ece9f7]"
-                        rows={3}
-                        value={story.publicBrief || ''}
-                        onChange={(e) => setStory({ ...story, publicBrief: e.target.value })}
-                        placeholder="Public briefing: what happened, when, who was around (no spoilers)"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="text-[11px] font-mono text-amber-200 uppercase font-semibold">Culprit ID</label>
-                      <input
-                        className="w-full mt-1 px-3 py-2.5 rounded-xl bg-[#0a0614] border border-[#4a3670]/70 text-xs focus:border-amber-200 outline-none text-[#ece9f7]"
-                        value={story.culpritId || ''}
-                        onChange={(e) => setStory({ ...story, culpritId: e.target.value })}
-                        placeholder="culpritId (e.g. vicky)"
-                      />
-                    </div>
-                  </div>
-                )}
+                <div className="space-y-3 mt-4">
+                  {stories.map((s: any) => {
+                    const active = s.id === activeStoryId;
+                    return (
+                      <div
+                        key={s.id}
+                        className={`rounded-2xl border p-4 transition-all ${
+                          active
+                            ? 'border-emerald-400/60 bg-emerald-500/10 shadow-lg'
+                            : 'border-[#4a3670]/60 bg-[#0a0614] hover:border-amber-200/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <div className="font-mono text-[10px] uppercase tracking-widest text-[#8f86ad]">
+                              {s.batchLabel}
+                            </div>
+                            <div className="font-dossier font-bold text-sm text-white mt-0.5">
+                              {s.caseTitle}
+                            </div>
+                            <div className="text-[11px] text-[#8f86ad] font-mono mt-0.5">
+                              Victim: {s.victim}
+                            </div>
+                            <div className="text-[11px] text-[#8f86ad] font-mono mt-0.5">
+                              {(s.suspects || []).map((x: any) => x.name).join(' · ')} — {s.clueCount} clues — culprit: {s.culpritId}
+                            </div>
+                          </div>
+                          {active ? (
+                            <span className="font-mono text-[10px] font-bold px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300">
+                              ✓ LIVE NOW
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => selectStory(s.id)}
+                              className="font-mono text-[11px] font-bold px-4 py-2 rounded-xl bg-gradient-to-r from-amber-300 to-yellow-200 text-[#241a05] hover:brightness-110 cursor-pointer transition-all"
+                            >
+                              SELECT FOR BATCH
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!stories.length && (
+                    <p className="text-[11px] text-[#8f86ad] font-mono">Loading stories…</p>
+                  )}
+                </div>
               </div>
 
               <div className="mt-6 space-y-2">
-                <button
-                  onClick={saveStory}
-                  className="w-full px-6 py-3 rounded-2xl font-mono font-bold text-xs bg-gradient-to-r from-amber-300 to-yellow-200 text-[#241a05] cursor-pointer hover:brightness-110 transition-all shadow-lg"
-                >
-                  SAVE STORY
-                </button>
                 <p className="text-[10px] text-[#5f5585] font-mono text-center">
-                  Advanced suspect schema update via: PUT /api/admin/config/story
+                  Switching stories restarts unfinished Round-2 sessions on the new case automatically.
                 </p>
               </div>
             </div>

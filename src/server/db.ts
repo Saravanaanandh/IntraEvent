@@ -86,7 +86,9 @@ export function persistDetSession(sess: any) {
   if (sess?.participantId) void upsert(DetSessionDoc, sess.participantId, sess);
 }
 export function persistConfig(cfg: any) {
-  void upsert(ConfigDoc, 'global', cfg);
+  // Returned (not void): admin mutation endpoints AWAIT this so the write has
+  // landed before any subsequent refreshConfig() re-read can observe it.
+  return upsert(ConfigDoc, 'global', cfg);
 }
 
 export async function wipeMongo() {
@@ -158,4 +160,16 @@ export function loadLieDoc(pid: string): Promise<any | null> {
 
 export function loadDetDoc(pid: string): Promise<any | null> {
   return findDoc(DetSessionDoc, pid);
+}
+
+// Global event config doc (admin controls) — re-read on demand so admin
+// updates go live on every serverless instance, not just boot time.
+export async function loadConfigDoc(): Promise<any | null> {
+  if (!connected) return null;
+  try {
+    const d = await ConfigDoc.findOne({ pid: 'global' }).lean().exec();
+    return (d as any)?.data ?? null;
+  } catch {
+    return null;
+  }
 }

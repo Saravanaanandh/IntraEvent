@@ -146,16 +146,13 @@ export default function HeroHome({
               </p>
             </div>
 
-            {/* Total Timing: 30 + 45 min */}
+            {/* Total Timing: 15 min + 1 hr */}
             <div className="inline-flex items-center gap-3 px-6 py-3 rounded-2xl bg-[#0b1426]/90 border border-cyan-500/40 text-xs sm:text-sm font-mono text-cyan-200 shadow-2xl backdrop-blur-md">
               <Clock className="w-4 h-4 text-emerald-400 animate-pulse" />
               <span className="text-[#8e9cb5] font-semibold tracking-wide">TOTAL DURATION:</span>
               <span className="text-white font-extrabold text-base tracking-widest px-2 py-0.5 rounded-lg bg-cyan-950/60 border border-cyan-400/40">
-                30 + 45 MIN
+                15 MIN + 1 HR
               </span>
-              {/* <span className="hidden sm:inline text-cyan-300/60 font-code text-xs">
-                (Round 1: 30m + Round 2: 45m)
-              </span> */}
             </div>
 
             {/* Start Button */}
@@ -202,7 +199,7 @@ export default function HeroHome({
                 </div>
                 <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-cyan-950/70 border border-cyan-400/30 text-[11px] font-mono text-cyan-300">
                   <Clock className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>30 + 45 MIN</span>
+                  <span>15 MIN + 1 HR</span>
                 </div>
               </div>
 

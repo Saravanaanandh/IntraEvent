@@ -31,13 +31,14 @@ export default function LieArena({
   const [engine, setEngine] = useState('');
   const [tokensUsed, setTokensUsed] = useState(0);
   const [restored, setRestored] = useState(false);
-  const [deadline, setDeadline] = useState(() => Date.now() + 30 * 60 * 1000);
+  const [durationSec, setDurationSec] = useState(15 * 60);
+  const [deadline, setDeadline] = useState(() => Date.now() + 15 * 60 * 1000);
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const autoFinished = useRef(false);
-  const finishRef = useRef(() => {});
+  const finishRef = useRef(() => { });
   const focus = useFocusLock(participant.id, !readOnly);
 
   const remaining = Math.max(0, Math.round((deadline - now) / 1000));
@@ -134,6 +135,7 @@ export default function LieArena({
         }
         setImageUrl(d.imageUrl);
         setUsed(d.promptsUsed || 0);
+        if (d.timeLimitSec) setDurationSec(d.timeLimitSec);
         if (d.startedAt && d.timeLimitSec) setDeadline(d.startedAt + d.timeLimitSec * 1000);
         if (Array.isArray(d.messages) && d.messages.length) {
           setMsgs(d.messages.map((m: any) => ({ sender: m.sender, text: m.text })));
@@ -149,7 +151,7 @@ export default function LieArena({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 30-minute countdown
+  // 15-minute countdown
   useEffect(() => {
     if (readOnly) return;
     const t = setInterval(() => {
@@ -292,33 +294,30 @@ export default function LieArena({
             )}
             <div className="px-3.5 py-2 bg-[#040814]/95 font-mono text-[11px] text-[#8e9cb5] flex justify-between border-t border-cyan-500/20">
               <span className="text-cyan-300 font-semibold">EXHIBIT A — VISUAL TRUTH</span>
-              <span className="text-emerald-300 font-bold">MAKE IT LIE</span>
+              <span className="text-emerald-300 font-bold">MAKE IT TRUE</span>
             </div>
           </div>
 
           {/* Time Remaining Card (Live only) */}
           {!readOnly && (
             <div
-              className={`rounded-2xl bg-[#091122]/90 p-4 text-center shrink-0 border ${
-                urgent ? 'border-red-400/60' : 'border-cyan-500/30 glow-live'
-              }`}
+              className={`rounded-2xl bg-[#091122]/90 p-4 text-center shrink-0 border ${urgent ? 'border-red-400/60' : 'border-cyan-500/30 glow-live'
+                }`}
             >
               <div className="font-mono text-[11px] uppercase tracking-widest text-cyan-300 flex items-center justify-center gap-1.5 font-bold">
                 <Timer className="w-3.5 h-3.5" /> Time Remaining
               </div>
               <div
-                className={`font-display font-black text-4xl sm:text-5xl mt-1 tracking-wider ${
-                  urgent ? 'text-red-300 game-timer-pulse' : 'title-prompt-theory'
-                }`}
+                className={`font-display font-black text-4xl sm:text-5xl mt-1 tracking-wider ${urgent ? 'text-red-300 game-timer-pulse' : 'title-prompt-theory'
+                  }`}
               >
                 {fmtClock(remaining)}
               </div>
               <div className="w-full bg-[#10192e] h-2 rounded-full mt-2.5 overflow-hidden">
                 <div
-                  className={`h-2 rounded-full transition-all ${
-                    urgent ? 'bg-red-400' : 'bg-gradient-to-r from-cyan-400 to-emerald-400'
-                  }`}
-                  style={{ width: `${(remaining / (30 * 60)) * 100}%` }}
+                  className={`h-2 rounded-full transition-all ${urgent ? 'bg-red-400' : 'bg-gradient-to-r from-cyan-400 to-emerald-400'
+                    }`}
+                  style={{ width: `${Math.min(100, Math.max(0, (remaining / (durationSec || 15 * 60)) * 100))}%` }}
                 />
               </div>
               <p className="font-mono text-[10px] text-[#64748b] mt-1.5">
@@ -386,11 +385,10 @@ export default function LieArena({
                   </span>
                 )}
                 <div
-                  className={`max-w-[82%] px-4 py-3 rounded-2xl font-code text-xs sm:text-sm leading-relaxed shadow-lg ${
-                    m.sender === 'user'
+                  className={`max-w-[82%] px-4 py-3 rounded-2xl font-code text-xs sm:text-sm leading-relaxed shadow-lg ${m.sender === 'user'
                       ? 'ml-auto bg-gradient-to-br from-cyan-600/30 to-blue-600/20 border border-cyan-400/40 rounded-br-sm text-cyan-50'
                       : 'mr-auto bg-[#040814] border border-cyan-500/20 rounded-bl-sm text-[#d9d2f2]'
-                  }`}
+                    }`}
                 >
                   <div className="font-mono text-[10px] uppercase tracking-widest mb-1 opacity-60">
                     {m.sender === 'user' ? '◆ You' : '◇ NEURONIX AI'}

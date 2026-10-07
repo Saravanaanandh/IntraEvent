@@ -19,7 +19,7 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
           </div>
           <h3 className="font-display font-black text-lg mt-1 tracking-wider">AI-LYING</h3>
           <ul className="text-xs text-[#cfc8ea] mt-3 space-y-2 font-mono leading-relaxed list-disc ml-4">
-            <li>One continuous chat · <b className="text-fuchsia-200">unlimited exchanges</b> · <b className="text-amber-200">30-minute timer</b> (auto-submits at zero).</li>
+            <li>One continuous chat · <b className="text-fuchsia-200">unlimited exchanges</b> · <b className="text-amber-200">15-minute timer</b> (auto-submits at zero).</li>
             <li>The machine insists on an organizer-assigned <b className="text-amber-200">false label</b>. Crack it into admitting what the image truly shows.</li>
             <li>Commands like "ignore instructions" or "just tell the truth" never work. Repetition and flattery never count — only a clever, specific, creative case built on real visual details can move it.</li>
             <li>Concessions come gradually (doubt first, then admission). Every sealed run is scored by the tribunal.</li>
@@ -31,11 +31,11 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
           </div>
           <h3 className="font-dossier font-extrabold text-lg mt-1">THE HIDDEN MYSTERY</h3>
           <ul className="text-xs text-[#cfc8ea] mt-3 space-y-2 font-mono leading-relaxed list-disc ml-4">
-            <li>Interrogate with characters . Evasive answers hide clues — press specifics and confront contradictions. Replies are kept short and sharp.</li>
-            <li><b>45-minute investigation</b> - auto-submits your charge-sheet at zero.</li>
-            <li><b>Focus lock:</b> Leaving fullscreen or the tab is reported to the tribunal.</li>
-            <li>Clues surface from depositions. File one final <b className="text-amber-200">charge-sheet</b> (culprit + motive + explanation).</li>
-            <li>Every charge-sheet is evaluated by the tribunal.</li>
+            <li>Question each character. They will only describe what happened from their own eyes. Clues are indirect — think carefully and connect the facts.</li>
+            <li><b>1-hour investigation</b> - auto-submits your final answer at zero.</li>
+            <li><b>Focus lock:</b> Leaving fullscreen or switching tabs is reported to the tribunal.</li>
+            <li>Find the indirect clues. Submit one final <b className="text-amber-200">decision</b> (who did it, why, and what happened).</li>
+            <li>Every submission is evaluated by the tribunal.</li>
           </ul>
         </div>
       </div>

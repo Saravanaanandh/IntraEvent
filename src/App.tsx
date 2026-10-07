@@ -151,8 +151,8 @@ export default function App() {
                 ROUND 1 COMPLETE
               </h2>
               <p className="text-xs text-[#8e9cb5] mt-2 font-mono leading-relaxed">
-                Your persuasion run has been recorded and sealed. Round 2 — The Hidden Mystery (45
-                min) — is now unlocked.
+                Your persuasion run has been recorded and sealed. Round 2 — The Hidden Mystery (1
+                Hour) — is now unlocked.
               </p>
               <button
                 onClick={() => {
@@ -162,7 +162,7 @@ export default function App() {
                 }}
                 className="mt-5 w-full px-6 py-3.5 rounded-2xl font-mono font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-400 text-[#041017] hover:brightness-110 cursor-pointer transition-all shadow-xl"
               >
-                OPEN ROUND 2 (45 MIN) →
+                OPEN ROUND 2 (1 HOUR) →
               </button>
               <button
                 onClick={() => setView('home')}
