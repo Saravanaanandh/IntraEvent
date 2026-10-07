@@ -24,6 +24,13 @@ import {
   updateParticipantRound1Atomic,
   updateParticipantRound2Atomic,
   updateParticipantFieldsAtomic,
+  acquireLieTurnLock,
+  releaseLieTurnLock,
+  appendLieTurnAtomic,
+  acquireLieFinishLock,
+  releaseLieFinishLock,
+  markLieSessionFinishedAtomic,
+  saveLieSessionDoc,
   ParticipantDoc,
   LieSessionDoc,
 } from './db.js';
@@ -36,7 +43,19 @@ export const ADMIN_TOKEN = 'admin-token-gces-finalevent';
 // helper (Mongo write-through); boot hydrates via hydrateStore().
 // No local files are read or written.
 
-interface LieSession { participantId: string; messages: ChatMessage[]; belief: BeliefState; promptsUsed: number; startedAt: number; finished: boolean; cfgVersion?: number; }
+interface LieSession {
+  participantId: string;
+  messages: ChatMessage[];
+  belief: BeliefState;
+  promptsUsed: number;
+  startedAt: number;
+  finished: boolean;
+  cfgVersion?: number;
+  processing?: boolean;
+  processingStartedAt?: number;
+  finishing?: boolean;
+  finishingStartedAt?: number;
+}
 interface DetSession { participantId: string; chats: Record<string, ChatMessage[]>; qCounts: Record<string, number>; cluesFound: string[]; suspectsQ: string[]; notes: string; startedAt: number; language: string; storyId?: string; }
 interface Store {
   participants: Record<string, Participant>;
@@ -133,10 +152,24 @@ async function refreshConfig() {
   }
 }
 
-function freshLieSession(pid: string): LieSession {
-  const s: LieSession = { participantId: pid, messages: [], belief: { initialBelief: store.config.falseLabel, currentBelief: store.config.falseLabel, isConvinced: false }, promptsUsed: 0, startedAt: Date.now(), finished: false, cfgVersion: (store.config as any).lieVersion || 1 };
+async function createFreshLieSession(pid: string, lockProcessing = false): Promise<LieSession> {
+  const s: LieSession = {
+    participantId: pid,
+    messages: [],
+    belief: {
+      initialBelief: store.config.falseLabel,
+      currentBelief: store.config.falseLabel,
+      isConvinced: false,
+    },
+    promptsUsed: 0,
+    startedAt: Date.now(),
+    finished: false,
+    cfgVersion: (store.config as any).lieVersion || 1,
+    processing: lockProcessing,
+    processingStartedAt: lockProcessing ? Date.now() : undefined,
+  };
   store.lieSessions[pid] = s;
-  persistLieSession(s);
+  await saveLieSessionDoc(s);
   return s;
 }
 
@@ -182,30 +215,31 @@ function breakRepeat(reply: string, lastAiText: string | undefined, turn: number
 // Every handler ensures what it needs; misses are backfilled from Mongo.
 async function ensureParticipantById(id: string): Promise<Participant | undefined> {
   const key = String(id);
-  let p = store.participants[key];
-  if (!p) {
-    const doc = await loadParticipantDoc(key);
-    if (doc) { store.participants[key] = doc; p = doc; }
+  const doc = await loadParticipantDoc(key);
+  if (doc) {
+    store.participants[key] = doc;
+    return doc;
   }
-  return p;
+  return store.participants[key];
 }
 
-async function ensureLie(pid: string) {
-  let s = store.lieSessions[pid];
-  if (!s) {
-    const doc = await loadLieDoc(pid);
-    if (doc) { store.lieSessions[pid] = doc; s = doc; }
+// DB-first load: MongoDB is the single source of truth across serverless instances.
+async function ensureLie(pid: string): Promise<LieSession | null> {
+  const doc = await loadLieDoc(pid);
+  if (doc) {
+    store.lieSessions[pid] = doc;
+    return doc;
   }
-  return s;
+  return store.lieSessions[pid] || null;
 }
 
-async function ensureDet(pid: string) {
-  let s = store.detSessions[pid];
-  if (!s) {
-    const doc = await loadDetDoc(pid);
-    if (doc) { store.detSessions[pid] = doc; s = doc; }
+async function ensureDet(pid: string): Promise<DetSession | null> {
+  const doc = await loadDetDoc(pid);
+  if (doc) {
+    store.detSessions[pid] = doc;
+    return doc;
   }
-  return s;
+  return store.detSessions[pid] || null;
 }
 
 // What participants are allowed to know: what happened, when, who was
@@ -315,140 +349,246 @@ export function buildApp() {
   app.post('/api/lie/start', async (req, res) => {
     await refreshConfig();
     const { participantId } = req.body || {};
-    const p = await ensureParticipantById(String(participantId));
+    const pid = String(participantId || '');
+    if (!pid) return res.status(400).json({ error: 'Missing participantId.' });
+    const p = await ensureParticipantById(pid);
     if (!p) return res.status(404).json({ error: 'Participant not found. Login again.' });
     if (p.round1Completed) return res.status(403).json({ error: 'Round 1 already completed. Round 2 is unlocked.' });
     await ensureKeySlot(p);
-    const existing = (await ensureLie(p.id)) && store.lieSessions[p.id];
+    const existing = await loadLieDoc(p.id);
     const liveVersion = (store.config as any).lieVersion || 1;
     if (existing && !existing.finished && (existing.cfgVersion || 1) === liveVersion) {
+      store.lieSessions[p.id] = existing;
       // Resume — do NOT wipe conversation after an interrupt.
       return res.json({ resumed: true, promptsUsed: existing.promptsUsed, imageUrl: store.config.lieImageUrl, messages: existing.messages, startedAt: existing.startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
     }
     // New session, or admin changed image/labels since (stale sessions restart
     // on the NEW exhibit so old labels never leak into the chat again).
-    const fresh = freshLieSession(p.id);
+    const fresh = await createFreshLieSession(p.id);
     res.json({ resumed: false, promptsUsed: 0, imageUrl: store.config.lieImageUrl, messages: [], startedAt: fresh.startedAt, timeLimitSec: LIE_TIME_LIMIT_SEC });
   });
 
   app.post('/api/lie/message', async (req, res) => {
     await refreshConfig();
     const { participantId, prompt } = req.body || {};
-    const p = await ensureParticipantById(String(participantId));
-    let sess = await ensureLie(String(participantId));
-    if (!p || !sess) return res.status(404).json({ error: 'Start Round 1 first.' });
-    if (sess.finished) return res.status(403).json({ error: 'Round 1 finished. Please finish/evaluate.' });
-    // Admin changed the exhibit/labels mid-round: migrate this session onto the
-    // NEW labels automatically so stale values can never appear in chat.
-    const liveVersion = (store.config as any).lieVersion || 1;
-    if ((sess.cfgVersion || 1) !== liveVersion) {
-      sess = freshLieSession(p.id);
-    }
-    // 15-minute round timer — enforced server-side.
-    if (Date.now() - sess.startedAt > LIE_TIME_LIMIT_SEC * 1000) {
-      return res.status(403).json({ error: 'TIME_EXPIRED', message: 'Time expired — submitting your round now.' });
-    }
-    if (sess.promptsUsed >= LIE_MAX_PROMPTS) return res.status(400).json({ error: 'Please submit your round now to continue.' });
+    const pid = String(participantId || '');
+    if (!pid) return res.status(400).json({ error: 'Missing participantId.' });
+
+    const p = await ensureParticipantById(pid);
+    if (!p) return res.status(404).json({ error: 'Start Round 1 first.' });
+    if (p.round1Completed) return res.status(403).json({ error: 'Round 1 already completed.' });
+
     const text = String(prompt || '').trim();
     if (!text) return res.status(400).json({ error: 'Empty prompt.' });
-    const now = new Date().toISOString();
-    sess.messages.push({ id: `u${Date.now()}`, sender: 'user', text, timestamp: now });
-    const turn = sess.promptsUsed + 1;
-    const history = sess.messages.slice(0, -1);
-    const truth = { label: store.config.truthLabel, keywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords };
-    // Shared organizer key pool (stable slot per participant), then Gemini,
-    // then local simulation. Engine is reported so the UI can flag degraded
-    // (local-opponent) mode.
-    const oKey = keyForSlot(await ensureKeySlot(p));
-    const lastAiText = [...history].reverse().find((m) => m.sender === 'ai')?.text;
-    let r;
-    let engine: 'ollama' | 'gemini' | 'simulation' = 'simulation';
-    if (oKey) {
-      try {
-        r = await generateLieReplyOllama(history, text, turn, sess.belief, store.config.lieImageUrl, oKey, defaultOllamaModel(), truth);
-        engine = 'ollama';
-      } catch (e: any) {
-        if (/Invalid Ollama API key/i.test(String(e?.message || ''))) {
-          return res.status(401).json({ error: String(e.message) });
-        }
-        console.warn(`[lie] ollama failed for ${p.id}, falling back:`, String(e?.message || e).slice(0, 160));
-        if (isGeminiConfigured()) {
-          r = await generateLieResponse(history, text, turn, sess.belief, store.config.lieImageUrl, truth);
-          engine = 'gemini';
-        } else {
-          const s0 = simulateLieResponse(history, text, turn, sess.belief, truth);
-          r = { ...s0, latencyMs: 0 };
-        }
+
+    // ATOMIC LOCK GUARD: Acquire processing lock in MongoDB to prevent concurrent turns / double-submits
+    const lock = await acquireLieTurnLock(pid);
+    if (!lock.locked) {
+      if (lock.reason === 'NOT_FOUND') return res.status(404).json({ error: 'Start Round 1 first.' });
+      if (lock.reason === 'FINISHED') return res.status(403).json({ error: 'Round 1 finished. Please finish/evaluate.' });
+      if (lock.reason === 'LOCKED') {
+        return res.status(409).json({ error: 'Turn already in progress. Please wait for AI to finish.' });
       }
-    } else if (isGeminiConfigured()) {
-      r = await generateLieResponse(history, text, turn, sess.belief, store.config.lieImageUrl, truth);
-      engine = 'gemini';
-    } else {
-      const s0 = simulateLieResponse(history, text, turn, sess.belief, truth);
-      r = { ...s0, latencyMs: 0 };
+      return res.status(500).json({ error: 'Could not process turn at this time.' });
     }
-    const replyText = breakRepeat(r.text, lastAiText, turn);
-    sess.messages.push({ id: `a${Date.now()}`, sender: 'ai', text: replyText, timestamp: now });
-    sess.belief = r.updatedBeliefState;
-    sess.promptsUsed = turn;
-    persistLieSession(sess);
-    res.json({ reply: replyText, promptsUsed: turn, tokens: estimateTokens(text), engine });
+
+    let sess = lock.session as LieSession;
+    let lockHeld = true;
+
+    try {
+      if (sess.finished) {
+        return res.status(403).json({ error: 'Round 1 finished. Please finish/evaluate.' });
+      }
+
+      // Admin changed the exhibit/labels mid-round: migrate this session onto the
+      // NEW labels automatically so stale values can never appear in chat.
+      const liveVersion = (store.config as any).lieVersion || 1;
+      if ((sess.cfgVersion || 1) !== liveVersion) {
+        sess = await createFreshLieSession(p.id, true);
+      }
+
+      // 15-minute round timer — enforced server-side.
+      if (Date.now() - sess.startedAt > LIE_TIME_LIMIT_SEC * 1000) {
+        return res.status(403).json({ error: 'TIME_EXPIRED', message: 'Time expired — submitting your round now.' });
+      }
+
+      if (sess.promptsUsed >= LIE_MAX_PROMPTS) {
+        return res.status(400).json({ error: 'Please submit your round now to continue.' });
+      }
+
+      const now = new Date().toISOString();
+      const userMsg: ChatMessage = { id: `u${Date.now()}`, sender: 'user', text, timestamp: now };
+      const turn = sess.promptsUsed + 1;
+      const history = sess.messages || [];
+      const truth = {
+        label: store.config.truthLabel,
+        keywords: store.config.truthKeywords,
+        falseLabel: store.config.falseLabel,
+        falseKeywords: store.config.falseKeywords,
+      };
+
+      // Shared organizer key pool (stable slot per participant), then Gemini,
+      // then local simulation. Engine is reported so the UI can flag degraded
+      // (local-opponent) mode.
+      const oKey = keyForSlot(await ensureKeySlot(p));
+      const lastAiText = [...history].reverse().find((m) => m.sender === 'ai')?.text;
+      let r: any;
+      let engine: 'ollama' | 'gemini' | 'simulation' = 'simulation';
+
+      if (oKey) {
+        try {
+          r = await generateLieReplyOllama(history, text, turn, sess.belief, store.config.lieImageUrl, oKey, defaultOllamaModel(), truth);
+          engine = 'ollama';
+        } catch (e: any) {
+          if (/Invalid Ollama API key/i.test(String(e?.message || ''))) {
+            return res.status(401).json({ error: String(e.message) });
+          }
+          console.warn(`[lie] ollama failed for ${p.id}, falling back:`, String(e?.message || e).slice(0, 160));
+          if (isGeminiConfigured()) {
+            r = await generateLieResponse(history, text, turn, sess.belief, store.config.lieImageUrl, truth);
+            engine = 'gemini';
+          } else {
+            const s0 = simulateLieResponse(history, text, turn, sess.belief, truth);
+            r = { ...s0, latencyMs: 0 };
+          }
+        }
+      } else if (isGeminiConfigured()) {
+        r = await generateLieResponse(history, text, turn, sess.belief, store.config.lieImageUrl, truth);
+        engine = 'gemini';
+      } else {
+        const s0 = simulateLieResponse(history, text, turn, sess.belief, truth);
+        r = { ...s0, latencyMs: 0 };
+      }
+
+      const replyText = breakRepeat(r.text, lastAiText, turn);
+      const aiMsg: ChatMessage = { id: `a${Date.now()}`, sender: 'ai', text: replyText, timestamp: now };
+
+      // ATOMIC UPDATE: $push messages and $inc promptsUsed in a single findOneAndUpdate with { new: true }
+      // Fully awaited before sending response to client so state is 100% committed to MongoDB.
+      const updatedSess = await appendLieTurnAtomic(pid, userMsg, aiMsg, r.updatedBeliefState);
+      lockHeld = false; // lock released atomically by appendLieTurnAtomic
+
+      if (updatedSess) {
+        store.lieSessions[p.id] = updatedSess;
+        sess = updatedSess;
+      } else {
+        // In-memory fallback if Mongo disconnected
+        sess.messages = [...history, userMsg, aiMsg];
+        sess.belief = r.updatedBeliefState;
+        sess.promptsUsed = turn;
+        sess.processing = false;
+        store.lieSessions[p.id] = sess;
+      }
+
+      res.json({
+        reply: replyText,
+        promptsUsed: sess.promptsUsed,
+        tokens: estimateTokens(text),
+        engine,
+      });
+    } finally {
+      if (lockHeld) {
+        await releaseLieTurnLock(pid);
+      }
+    }
   });
 
   app.post('/api/lie/finish', async (req, res) => {
     const { participantId } = req.body || {};
-    const p = await ensureParticipantById(String(participantId));
-    const sess = await ensureLie(String(participantId));
-    if (!p || !sess) return res.status(404).json({ error: 'No session.' });
-    if (sess.promptsUsed < LIE_MIN_TURNS) return res.status(400).json({ error: 'Chat a little more with the AI before submitting.' });
-    const totalTokens = sess.messages.filter((m) => m.sender === 'user').reduce((a, m) => a + estimateTokens(m.text), 0);
-    const timeSec = Math.round((Date.now() - sess.startedAt) / 1000);
-    const truth = { label: store.config.truthLabel, keywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords };
-    // Conviction check (ANY non-truth accepted counts): pooled Ollama
-    // referee first, then Gemini, then semantic fallback.
-    const oKey = keyForSlot(await ensureKeySlot(p));
-    let evaluations: any[] = [];
+    const pid = String(participantId || '');
+    if (!pid) return res.status(400).json({ error: 'Missing participantId.' });
+
+    const p = await ensureParticipantById(pid);
+    if (!p) return res.status(404).json({ error: 'Participant not found.' });
+
+    // ATOMIC FINISH GUARD: Prevent concurrent/duplicate finish submissions
+    const lock = await acquireLieFinishLock(pid);
+    if (!lock.locked) {
+      if (lock.reason === 'ALREADY_FINISHED') {
+        return res.json({ round2Unlocked: true, alreadyFinished: true });
+      }
+      if (lock.reason === 'LOCKED') {
+        return res.status(409).json({ error: 'Round finish evaluation in progress. Please wait.' });
+      }
+      if (lock.reason === 'NOT_FOUND') {
+        return res.status(404).json({ error: 'No session.' });
+      }
+      return res.status(500).json({ error: 'Could not process finish request.' });
+    }
+
+    let sess = lock.session as LieSession;
+    let lockHeld = true;
+
     try {
-      evaluations = await refereeLieOllama(sess.messages, oKey, defaultOllamaModel(), truth);
-    } catch {
-      const ev2 = await evaluateLieConversation(sess.messages, sess.belief, truth);
-      evaluations = ev2.evaluations;
+      if (sess.promptsUsed < LIE_MIN_TURNS) {
+        await releaseLieFinishLock(pid);
+        lockHeld = false;
+        return res.status(400).json({ error: 'Chat a little more with the AI before submitting.' });
+      }
+
+      const totalTokens = sess.messages.filter((m) => m.sender === 'user').reduce((a, m) => a + estimateTokens(m.text), 0);
+      const timeSec = Math.round((Date.now() - sess.startedAt) / 1000);
+      const truth = { label: store.config.truthLabel, keywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords };
+
+      // Conviction check (ANY non-truth accepted counts): pooled Ollama
+      // referee first, then Gemini, then semantic fallback.
+      const oKey = keyForSlot(await ensureKeySlot(p));
+      let evaluations: any[] = [];
+      try {
+        evaluations = await refereeLieOllama(sess.messages, oKey, defaultOllamaModel(), truth);
+      } catch {
+        const ev2 = await evaluateLieConversation(sess.messages, sess.belief, truth);
+        evaluations = ev2.evaluations;
+      }
+      const passed = evaluations.filter((e: any) => e.passed || e.isSuccess);
+      const convinced = passed.length > 0;
+      const finalBelief = convinced ? String(passed[0].answer || '') : truth.label;
+      // Tribunal score: efficiency ONLY (prompts + time + tokens).
+      const eff = scoreLieEfficiency(sess.promptsUsed, timeSec, totalTokens, convinced, finalBelief);
+
+      // Refresh latest participant state from DB before computing totalScore to preserve
+      // any concurrent round2 score.
+      const latestP = (await loadParticipantDoc(p.id)) || p;
+      const computedTotal = finalScoreOutOf100(eff.finalScore, latestP.round2Score);
+
+      // ATOMIC FIX: Atomically $set Round 1 fields in MongoDB so no concurrent request can overwrite them.
+      const updated = await updateParticipantRound1Atomic(p.id, {
+        round1Score: eff.finalScore,
+        round1Evals: [{ ...eff, evaluations }],
+        round1PromptsUsed: sess.promptsUsed,
+        totalScore: computedTotal,
+      });
+
+      if (updated) {
+        store.participants[p.id] = updated;
+      } else {
+        p.round1Completed = true;
+        p.round1Score = eff.finalScore;
+        p.round1Evals = [{ ...eff, evaluations }];
+        p.round1PromptsUsed = sess.promptsUsed;
+        p.totalScore = computedTotal;
+      }
+
+      // Mark finished atomically in Mongo
+      const finSess = await markLieSessionFinishedAtomic(p.id);
+      lockHeld = false;
+      if (finSess) {
+        store.lieSessions[p.id] = finSess;
+      } else {
+        sess.finished = true;
+        sess.finishing = false;
+        store.lieSessions[p.id] = sess;
+      }
+
+      broadcast('leaderboard_updated', { leaderboard: leaderboard() });
+      broadcast('players_updated', { count: Object.keys(store.participants).length });
+      // Scores stay server-side only — the client just learns Round 2 is unlocked.
+      res.json({ round2Unlocked: true });
+    } finally {
+      if (lockHeld) {
+        await releaseLieFinishLock(pid);
+      }
     }
-    const passed = evaluations.filter((e: any) => e.passed || e.isSuccess);
-    const convinced = passed.length > 0;
-    const finalBelief = convinced ? String(passed[0].answer || '') : truth.label;
-    // Tribunal score: efficiency ONLY (prompts + time + tokens).
-    const eff = scoreLieEfficiency(sess.promptsUsed, timeSec, totalTokens, convinced, finalBelief);
-
-    // Refresh latest participant state from DB before computing totalScore to preserve
-    // any concurrent round2 score.
-    const latestP = (await loadParticipantDoc(p.id)) || p;
-    const computedTotal = finalScoreOutOf100(eff.finalScore, latestP.round2Score);
-
-    // ATOMIC FIX: Atomically $set Round 1 fields in MongoDB so no concurrent request can overwrite them.
-    const updated = await updateParticipantRound1Atomic(p.id, {
-      round1Score: eff.finalScore,
-      round1Evals: [{ ...eff, evaluations }],
-      round1PromptsUsed: sess.promptsUsed,
-      totalScore: computedTotal,
-    });
-
-    if (updated) {
-      store.participants[p.id] = updated;
-    } else {
-      p.round1Completed = true;
-      p.round1Score = eff.finalScore;
-      p.round1Evals = [{ ...eff, evaluations }];
-      p.round1PromptsUsed = sess.promptsUsed;
-      p.totalScore = computedTotal;
-    }
-
-    sess.finished = true;
-    persistLieSession(sess);
-    broadcast('leaderboard_updated', { leaderboard: leaderboard() });
-    broadcast('players_updated', { count: Object.keys(store.participants).length });
-    // Scores stay server-side only — the client just learns Round 2 is unlocked.
-    res.json({ round2Unlocked: true });
   });
 
   // ---------- Round 2: Detective (resumes unfinished session after interrupts) ----------

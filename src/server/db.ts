@@ -43,6 +43,11 @@ export function connectMongo(): Promise<boolean> {
   return connectPromise;
 }
 
+export async function ensureConnected(): Promise<boolean> {
+  if (connected) return true;
+  return await connectMongo();
+}
+
 async function doConnect(): Promise<boolean> {
   const mongoUrl = mongoUri();
   if (!mongoUrl) {
@@ -67,7 +72,7 @@ async function doConnect(): Promise<boolean> {
 }
 
 async function upsert(model: mongoose.Model<any>, pid: string, data: any) {
-  if (!connected) return;
+  if (!await ensureConnected()) return;
   try {
     await model.findOneAndUpdate({ pid }, { pid, data }, { upsert: true }).exec();
   } catch (e: any) {
@@ -91,12 +96,12 @@ async function upsert(model: mongoose.Model<any>, pid: string, data: any) {
 
 // Atomic field updater for participant documents
 export async function updateParticipantAtomic(pid: string, updateQuery: mongoose.UpdateQuery<any>): Promise<Participant | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   try {
     const d = await ParticipantDoc.findOneAndUpdate(
       { pid },
       updateQuery,
-      { new: true }
+      { returnDocument: 'after' }
     ).lean().exec();
     return ((d as any)?.data as Participant) ?? null;
   } catch (e: any) {
@@ -108,13 +113,13 @@ export async function updateParticipantAtomic(pid: string, updateQuery: mongoose
 // Atomically record tab / fullscreen violations using $inc so concurrent
 // violation events never overwrite scores or progress.
 export async function recordViolationAtomic(pid: string, kind: 'tab' | 'fs'): Promise<{ tabHidden: number; fullscreenExit: number } | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   const field = kind === 'tab' ? 'data.violations.tabHidden' : 'data.violations.fullscreenExit';
   try {
     const d = await ParticipantDoc.findOneAndUpdate(
       { pid },
       { $inc: { [field]: 1 } },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean().exec();
     return (d as any)?.data?.violations ?? null;
   } catch (e: any) {
@@ -128,7 +133,7 @@ export async function updateParticipantRound1Atomic(
   pid: string,
   scoreData: { round1Score: number; round1Evals: any[]; round1PromptsUsed: number; totalScore: number }
 ): Promise<Participant | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   try {
     const d = await ParticipantDoc.findOneAndUpdate(
       { pid },
@@ -141,7 +146,7 @@ export async function updateParticipantRound1Atomic(
           'data.totalScore': scoreData.totalScore,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean().exec();
     return ((d as any)?.data as Participant) ?? null;
   } catch (e: any) {
@@ -155,7 +160,7 @@ export async function updateParticipantRound2Atomic(
   pid: string,
   scoreData: { round2Score: number; round2Accuracy: number; round2Clues: string[]; totalScore: number; finishedAt: string }
 ): Promise<Participant | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   try {
     const d = await ParticipantDoc.findOneAndUpdate(
       { pid },
@@ -169,7 +174,7 @@ export async function updateParticipantRound2Atomic(
           'data.finishedAt': scoreData.finishedAt,
         },
       },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean().exec();
     return ((d as any)?.data as Participant) ?? null;
   } catch (e: any) {
@@ -180,7 +185,7 @@ export async function updateParticipantRound2Atomic(
 
 // Atomically update specific scalar fields (e.g. year, keySlot)
 export async function updateParticipantFieldsAtomic(pid: string, fields: Partial<Participant>): Promise<Participant | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   const setFields: Record<string, any> = {};
   for (const [k, v] of Object.entries(fields)) {
     setFields[`data.${k}`] = v;
@@ -189,12 +194,241 @@ export async function updateParticipantFieldsAtomic(pid: string, fields: Partial
     const d = await ParticipantDoc.findOneAndUpdate(
       { pid },
       { $set: setFields },
-      { new: true }
+      { returnDocument: 'after' }
     ).lean().exec();
     return ((d as any)?.data as Participant) ?? null;
   } catch (e: any) {
     console.warn(`[mongo] fields atomic update failed for ${pid}:`, String(e?.message || e).slice(0, 150));
     return null;
+  }
+}
+
+// ============================================================================
+// ROUND 1 CHAT SESSION: ATOMIC OPERATIONS & CONCURRENCY GUARDS
+// ============================================================================
+
+/**
+ * Atomically acquire turn processing lock for a LieSession.
+ * Prevents concurrent turns (e.g. double-clicks, duplicate rapid submits) from interleaving.
+ * Uses 45-second lease TTL so a crashed serverless instance auto-heals.
+ */
+export async function acquireLieTurnLock(
+  pid: string
+): Promise<{ locked: boolean; session: any | null; reason?: 'LOCKED' | 'FINISHED' | 'NOT_FOUND' | 'ERROR' }> {
+  if (!await ensureConnected()) return { locked: false, session: null, reason: 'ERROR' };
+  const now = Date.now();
+  const lockTtlMs = 45000;
+  const lockCutoff = now - lockTtlMs;
+  try {
+    const d = await LieSessionDoc.findOneAndUpdate(
+      {
+        pid,
+        'data.finished': { $ne: true },
+        $or: [
+          { 'data.processing': { $ne: true } },
+          { 'data.processingStartedAt': { $lt: lockCutoff } },
+          { 'data.processingStartedAt': { $exists: false } },
+        ],
+      },
+      {
+        $set: {
+          'data.processing': true,
+          'data.processingStartedAt': now,
+        },
+      },
+      { returnDocument: 'after' }
+    ).lean().exec();
+
+    if (d && (d as any).data) {
+      return { locked: true, session: (d as any).data };
+    }
+
+    const existing = await LieSessionDoc.findOne({ pid }).lean().exec();
+    if (!existing || !(existing as any).data) {
+      return { locked: false, session: null, reason: 'NOT_FOUND' };
+    }
+    const sess = (existing as any).data;
+    if (sess.finished) {
+      return { locked: false, session: sess, reason: 'FINISHED' };
+    }
+    return { locked: false, session: sess, reason: 'LOCKED' };
+  } catch (e: any) {
+    console.warn(`[mongo] acquireLieTurnLock failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return { locked: false, session: null, reason: 'ERROR' };
+  }
+}
+
+/**
+ * Release turn processing lock on error / early exit.
+ */
+export async function releaseLieTurnLock(pid: string): Promise<void> {
+  if (!await ensureConnected()) return;
+  try {
+    await LieSessionDoc.findOneAndUpdate(
+      { pid },
+      {
+        $set: { 'data.processing': false },
+        $unset: { 'data.processingStartedAt': 1 },
+      }
+    ).exec();
+  } catch (e: any) {
+    console.warn(`[mongo] releaseLieTurnLock failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+  }
+}
+
+/**
+ * Atomically append a chat turn:
+ * - $push userMsg and aiMsg to messages array
+ * - $inc promptsUsed by 1
+ * - $set updated belief state and clear processing flag
+ * - Returns updated session document from MongoDB directly ({ new: true })
+ */
+export async function appendLieTurnAtomic(
+  pid: string,
+  userMsg: any,
+  aiMsg: any,
+  updatedBelief: any
+): Promise<any | null> {
+  if (!await ensureConnected()) return null;
+  try {
+    const d = await LieSessionDoc.findOneAndUpdate(
+      { pid },
+      {
+        $push: {
+          'data.messages': { $each: [userMsg, aiMsg] },
+        },
+        $inc: {
+          'data.promptsUsed': 1,
+        },
+        $set: {
+          'data.belief': updatedBelief,
+          'data.processing': false,
+        },
+        $unset: {
+          'data.processingStartedAt': 1,
+        },
+      },
+      { returnDocument: 'after' }
+    ).lean().exec();
+    return ((d as any)?.data as any) ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] appendLieTurnAtomic failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
+/**
+ * Atomically acquire finish lock for Round 1 evaluation.
+ * Idempotency guard: prevents duplicate costly referee evaluations and last-writer-wins score races.
+ */
+export async function acquireLieFinishLock(
+  pid: string
+): Promise<{ locked: boolean; session: any | null; reason?: 'LOCKED' | 'ALREADY_FINISHED' | 'NOT_FOUND' | 'ERROR' }> {
+  if (!await ensureConnected()) return { locked: false, session: null, reason: 'ERROR' };
+  const now = Date.now();
+  const lockTtlMs = 60000; // 60s lease for referee eval
+  const lockCutoff = now - lockTtlMs;
+  try {
+    const d = await LieSessionDoc.findOneAndUpdate(
+      {
+        pid,
+        'data.finished': { $ne: true },
+        $or: [
+          { 'data.finishing': { $ne: true } },
+          { 'data.finishingStartedAt': { $lt: lockCutoff } },
+          { 'data.finishingStartedAt': { $exists: false } },
+        ],
+      },
+      {
+        $set: {
+          'data.finishing': true,
+          'data.finishingStartedAt': now,
+        },
+      },
+      { returnDocument: 'after' }
+    ).lean().exec();
+
+    if (d && (d as any).data) {
+      return { locked: true, session: (d as any).data };
+    }
+
+    const existing = await LieSessionDoc.findOne({ pid }).lean().exec();
+    if (!existing || !(existing as any).data) {
+      return { locked: false, session: null, reason: 'NOT_FOUND' };
+    }
+    const sess = (existing as any).data;
+    if (sess.finished) {
+      return { locked: false, session: sess, reason: 'ALREADY_FINISHED' };
+    }
+    return { locked: false, session: sess, reason: 'LOCKED' };
+  } catch (e: any) {
+    console.warn(`[mongo] acquireLieFinishLock failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return { locked: false, session: null, reason: 'ERROR' };
+  }
+}
+
+/**
+ * Release finish lock on validation error or referee failure.
+ */
+export async function releaseLieFinishLock(pid: string): Promise<void> {
+  if (!await ensureConnected()) return;
+  try {
+    await LieSessionDoc.findOneAndUpdate(
+      { pid },
+      {
+        $set: { 'data.finishing': false },
+        $unset: { 'data.finishingStartedAt': 1 },
+      }
+    ).exec();
+  } catch (e: any) {
+    console.warn(`[mongo] releaseLieFinishLock failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+  }
+}
+
+/**
+ * Atomically mark LieSession finished and clear locks.
+ */
+export async function markLieSessionFinishedAtomic(pid: string): Promise<any | null> {
+  if (!await ensureConnected()) return null;
+  try {
+    const d = await LieSessionDoc.findOneAndUpdate(
+      { pid },
+      {
+        $set: {
+          'data.finished': true,
+          'data.finishing': false,
+          'data.processing': false,
+        },
+        $unset: {
+          'data.processingStartedAt': 1,
+          'data.finishingStartedAt': 1,
+        },
+      },
+      { returnDocument: 'after' }
+    ).lean().exec();
+    return ((d as any)?.data as any) ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] markLieSessionFinishedAtomic failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
+/**
+ * Fully awaited write for newly created LieSession documents.
+ */
+export async function saveLieSessionDoc(sess: any): Promise<boolean> {
+  if (!await ensureConnected()) return false;
+  if (!sess?.participantId) return false;
+  try {
+    await LieSessionDoc.findOneAndUpdate(
+      { pid: sess.participantId },
+      { pid: sess.participantId, data: sess },
+      { upsert: true, returnDocument: 'after' }
+    ).exec();
+    return true;
+  } catch (e: any) {
+    console.warn(`[mongo] saveLieSessionDoc failed for ${sess?.participantId}:`, String(e?.message || e).slice(0, 150));
+    return false;
   }
 }
 
@@ -257,7 +491,7 @@ export async function loadAllFromMongo(): Promise<{
 // Single-doc loaders for serverless load-through: one request may land on a
 // warm instance that never saw this participant's session in memory.
 async function findDoc(model: mongoose.Model<any>, pid: string): Promise<any | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   try {
     const d = await model.findOne({ pid }).lean().exec();
     return (d as any)?.data ?? null;
@@ -271,7 +505,7 @@ export function loadParticipantDoc(pid: string): Promise<Participant | null> {
 }
 
 export async function loadParticipantByRegNo(registerNo: string): Promise<Participant | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   try {
     const d = await ParticipantDoc.findOne({ 'data.registerNo': registerNo }).lean().exec();
     return ((d as any)?.data as Participant) ?? null;
@@ -291,7 +525,7 @@ export function loadDetDoc(pid: string): Promise<any | null> {
 // Global event config doc (admin controls) — re-read on demand so admin
 // updates go live on every serverless instance, not just boot time.
 export async function loadConfigDoc(): Promise<any | null> {
-  if (!connected) return null;
+  if (!await ensureConnected()) return null;
   try {
     const d = await ConfigDoc.findOne({ pid: 'global' }).lean().exec();
     return (d as any)?.data ?? null;
@@ -315,7 +549,7 @@ const CounterDoc = mongoose.models.FECounter || mongoose.model('FECounter', coun
 export async function nextKeySlot(poolSize: number): Promise<number> {
   const size = Math.max(1, Math.floor(poolSize || 1));
   try {
-    if (!connected) throw new Error('offline');
+    if (!await ensureConnected()) throw new Error('offline');
     const d = await CounterDoc.findOneAndUpdate(
       { pid: 'keyslot' },
       { $inc: { seq: 1 } },
