@@ -460,7 +460,7 @@ export default function DetectiveGame({
                   {engine === 'simulation' && (
                     <span
                       className="font-mono text-[10px] text-amber-200/90"
-                      title="Your Ollama key isn't answering — local stand-in active."
+                      title="The AI service isn't answering — local stand-in active."
                     >
                       ⚠ local stand-in
                     </span>

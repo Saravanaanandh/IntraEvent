@@ -14,6 +14,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [falseKeywords, setFalseKeywords] = useState('');
   const [stories, setStories] = useState<any[]>([]);
   const [activeStoryId, setActiveStoryId] = useState('');
+  const [keyPool, setKeyPool] = useState<{ total: number; assigned: number } | null>(null);
   const [msg, setMsg] = useState('');
 
   const token = getAdminToken() || '';
@@ -33,6 +34,7 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
         }
         setStories(c.stories || []);
         setActiveStoryId(c.activeStoryId || '');
+        if (c.keyPool) setKeyPool(c.keyPool);
       }
 
       const lRes = await fetch('/api/leaderboard', { headers: auth });
@@ -180,6 +182,11 @@ export default function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                 <p className="text-[11px] text-[#8f86ad] font-mono mt-1">
                   Image + TRUE content (player wins by admitting it) + FALSE label (AI stubbornly insists on it).
                 </p>
+                {keyPool && (
+                  <p className="text-[11px] text-emerald-300 font-mono mt-1">
+                    Shared AI pool: {keyPool.assigned}/{keyPool.total} keys assigned — participants log in with name + regno only.
+                  </p>
+                )}
 
                 <div className="space-y-3 mt-4">
                   <div>

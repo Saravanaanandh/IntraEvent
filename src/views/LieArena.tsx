@@ -366,9 +366,9 @@ export default function LieArena({
             {engine === 'simulation' ? (
               <span
                 className="text-amber-200/90 text-xs"
-                title="Your Ollama key isn't answering — local opponent active."
+                title="The AI service isn't answering — local opponent active."
               >
-                ⚠ local opponent · check ollama key
+                ⚠ local opponent · AI service unreachable
               </span>
             ) : (
               <span className="text-[#52637a] text-xs">Tribunal Monitored</span>

@@ -1,20 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Play, Clock, Sparkles, UserCheck, Fingerprint, KeyRound, ExternalLink, ChevronLeft, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Play, Clock, UserCheck, Fingerprint, ChevronLeft, ArrowRight, ShieldCheck } from 'lucide-react';
 import AsciiRipple from '../components/AsciiRipple';
 import WarpText from '../components/WarpText';
-import { saveParticipant, getStoredParticipant, saveApiKeyCookie, getStoredApiKey } from '../utils/storage';
+import { saveParticipant, getStoredParticipant } from '../utils/storage';
 import { soundFX } from '../utils/audio';
 import { enterFullscreen } from '../utils/fullscreen';
 import type { Participant } from '../types';
-
-const OLLAMA_KEYS_URL = 'https://ollama.com/settings/keys';
-
-function maskKey(k: string): string {
-  if (!k) return '';
-  const clean = k.trim();
-  if (clean.length <= 8) return '••••••••';
-  return clean.slice(0, 4) + '••••' + clean.slice(-4);
-}
 
 export default function HeroHome({
   onParticipantReady,
@@ -24,24 +15,19 @@ export default function HeroHome({
   const existingParticipant = getStoredParticipant();
   const [showForm, setShowForm] = useState(false);
 
-  // Form states
+  // Form states — name + register no + year only (AI keys come from the server pool).
   const [name, setName] = useState(existingParticipant?.name || '');
   const [registerNo, setRegisterNo] = useState(existingParticipant?.registerNo || '');
   const [year, setYear] = useState(existingParticipant?.year || (existingParticipant as any)?.college || 'II');
-  const [apiKey, setApiKey] = useState('');
-  const [savedKey, setSavedKey] = useState(() => getStoredApiKey());
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const p = getStoredParticipant();
-    const k = getStoredApiKey();
-    setSavedKey(k);
     if (!p) {
       setName('');
       setRegisterNo('');
       setYear('II');
-      setApiKey('');
     } else {
       setName(p.name || '');
       setRegisterNo(p.registerNo || '');
@@ -52,19 +38,9 @@ export default function HeroHome({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErr('');
-    const keyToUse = apiKey.trim() || savedKey.trim();
-
-    if (!keyToUse) {
-      soundFX.playFail();
-      setErr('Ollama API key is required. Click GET KEY, copy your key, and paste it here.');
-      return;
-    }
 
     setLoading(true);
     try {
-      // Save key in persistent cookie for auto-complete on chrome restart
-      saveApiKeyCookie(keyToUse);
-
       const res = await fetch('/api/participant/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,7 +49,6 @@ export default function HeroHome({
           registerNo: registerNo.trim(),
           year: year.trim(),
           college: year.trim(),
-          ollamaKey: keyToUse,
         }),
       });
 
@@ -89,13 +64,6 @@ export default function HeroHome({
       setErr(ex.message || 'An error occurred while entering the event.');
     } finally {
       setLoading(false);
-    }
-  }
-
-  function handleAutofillKey() {
-    if (savedKey) {
-      setApiKey(savedKey);
-      soundFX.playClick();
     }
   }
 
@@ -181,10 +149,11 @@ export default function HeroHome({
             </div>
           </div>
         ) : (
-          /* =========================================================================
-             FORM AREA (Appears directly within the hero view after clicking START)
-             Contains participant enrollment fields + auto-complete for API key
-             ========================================================================= */
+           /* =========================================================================
+              FORM AREA (Appears directly within the hero view after clicking START)
+              Participant enrollment: name + register no + year (AI keys are
+              assigned automatically from the organizer's server pool)
+              ========================================================================= */
           <div className="w-full max-w-lg mx-auto animate-fadeIn">
             <div className="rounded-3xl bg-[#091122]/95 border border-cyan-500/40 backdrop-blur-2xl p-6 sm:p-7 shadow-2xl glow-live">
               {/* Card Header */}
@@ -256,71 +225,9 @@ export default function HeroHome({
                   </div>
                 </div>
 
-                {/* Ollama API Key with Cookies & Auto-Complete */}
-                <div>
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-semibold uppercase tracking-wider font-mono text-cyan-200">
-                      Ollama API Key
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        soundFX.playClick();
-                        window.open(OLLAMA_KEYS_URL, '_blank', 'noopener,noreferrer');
-                      }}
-                      className="font-mono text-[10px] px-2 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 hover:brightness-125 flex items-center gap-1 transition-all"
-                    >
-                      <ExternalLink className="w-3 h-3" /> GET KEY
-                    </button>
-                  </div>
-
-                  <div className="relative mt-1">
-                    <KeyRound className="absolute left-3 top-2.5 w-4 h-4 text-cyan-500/60" />
-                    <input
-                      id="apiKey"
-                      name="ollamaKey"
-                      type="password"
-                      autoComplete="on"
-                      list="apiKeyDatalist"
-                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-[#040814]/90 border border-cyan-500/30 text-sm font-code focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/40 outline-none placeholder:text-[#52637a] text-white"
-                      placeholder="Paste key from ollama.com/settings/keys"
-                      value={apiKey}
-                      onChange={(e) => {
-                        setApiKey(e.target.value);
-                        if (e.target.value.trim().length > 10) {
-                          saveApiKeyCookie(e.target.value.trim());
-                        }
-                      }}
-                      required={!savedKey}
-                    />
-                    <datalist id="apiKeyDatalist">
-                      {savedKey && <option value={savedKey}>Saved Ollama Key ({maskKey(savedKey)})</option>}
-                    </datalist>
-                  </div>
-
-                  {/* Suggest Auto-Complete Pill if cookie exists */}
-                  {savedKey && (
-                    <div className="mt-1.5 flex items-center justify-between px-2.5 py-1 rounded-xl bg-cyan-950/60 border border-cyan-400/30 text-[11px] font-mono animate-fadeIn">
-                      <div className="flex items-center gap-1.5 text-cyan-300 truncate">
-                        <Sparkles className="w-3 h-3 text-cyan-400 shrink-0 animate-pulse" />
-                        <span className="truncate">
-                          Saved in cookies: <b className="text-white">{maskKey(savedKey)}</b>
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleAutofillKey}
-                        className="shrink-0 ml-2 px-2 py-0.5 rounded-lg bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-200 border border-cyan-400/50 font-bold text-[10px] cursor-pointer transition-all"
-                      >
-                        Autofill Key
-                      </button>
-                    </div>
-                  )}
-
-                  <p className="text-[10px] text-[#6b7c96] font-mono mt-1 leading-tight">
-                    API key is securely stored in cookies so you won't lose it if you close Chrome.
-                  </p>
-                </div>
+                <p className="text-[10px] text-[#6b7c96] font-mono mt-1 leading-tight">
+                  Just your name, register no and year — the event assigns your AI access automatically.
+                </p>
 
                 {/* Error Banner */}
                 {err && (

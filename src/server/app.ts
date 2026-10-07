@@ -4,8 +4,29 @@ import { Participant, ChatMessage, BeliefState, CaseConfig } from '../types.js';
 import { estimateTokens, generateLieResponse, evaluateLieConversation, simulateLieResponse, isGeminiConfigured, scoreLieEfficiency, LIE_MIN_TURNS, LIE_TIME_LIMIT_SEC, LIE_MAX_PROMPTS, updateActiveLieConfig } from './lieEngine.js';
 import { DEFAULT_CASE, STORIES, DEFAULT_STORY_ID, getStory, suspectReply, detectClues, extractClueTags, stripClueTags, scoreDetective } from './detectiveEngine.js';
 import { storyMeta } from './stories.js';
+import { KEY_POOL_SIZE, keyForSlot } from './keypool.js';
 import { generateLieReplyOllama, refereeLieOllama, defaultOllamaModel } from './ollamaService.js';
-import { persistParticipant, persistLieSession, persistDetSession, persistConfig, wipeMongo, loadAllFromMongo, loadParticipantDoc, loadParticipantByRegNo, loadLieDoc, loadDetDoc, loadConfigDoc } from './db.js';
+import {
+  persistParticipant,
+  persistLieSession,
+  persistDetSession,
+  persistConfig,
+  wipeMongo,
+  loadAllFromMongo,
+  loadParticipantDoc,
+  loadParticipantByRegNo,
+  loadLieDoc,
+  loadDetDoc,
+  loadConfigDoc,
+  nextKeySlot,
+  updateParticipantAtomic,
+  recordViolationAtomic,
+  updateParticipantRound1Atomic,
+  updateParticipantRound2Atomic,
+  updateParticipantFieldsAtomic,
+  ParticipantDoc,
+  LieSessionDoc,
+} from './db.js';
 
 export const ADMIN_EMAIL = 'admin@gces.in';
 export const ADMIN_PASSWORD = 'Admin@GCES123';
@@ -126,6 +147,18 @@ function freshDetSession(pid: string) {
   return s;
 }
 
+// Shared key pool: every participant owns a STABLE slot (round-robin at
+// creation). Re-logins and old rows without a slot are assigned lazily.
+// The raw keys never leave the server — callers only get keyForSlot().
+async function ensureKeySlot(p: Participant): Promise<number> {
+  const cur = Number((p as any).keySlot);
+  if (Number.isInteger(cur) && cur >= 0 && cur < KEY_POOL_SIZE) return cur;
+  const slot = await nextKeySlot(KEY_POOL_SIZE);
+  (p as any).keySlot = slot;
+  void updateParticipantFieldsAtomic(p.id, { keySlot: slot } as any);
+  return slot;
+}
+
 // Safety net: if an AI reply is byte-identical to its previous reply, nudge
 // the conversation forward with a rotating follow-up instead of echoing.
 const LIE_REPEAT_TAILS = [
@@ -225,16 +258,14 @@ export function buildApp() {
     res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, caseTitle: store.config.caseConfig.caseTitle, victim: store.config.caseConfig.victim, storyText: store.config.caseConfig.storyText, suspects: store.config.caseConfig.suspects.map((s) => ({ id: s.id, name: s.name, role: s.role, personality: s.personality })), clues: store.config.caseConfig.clues, round2DurationSec: store.config.round2DurationSec });
   });
 
-  // ---------- participant auth (name + register no + OWN Ollama API key) ----------
+  // ---------- participant auth (name + register no + year; key comes from the server pool) ----------
   app.post('/api/participant/login', async (req, res) => {
     const name = String(req.body?.name || '').trim();
     const registerNo = String(req.body?.registerNo || req.body?.registerNumber || '').trim().toUpperCase();
     const year = String(req.body?.year || req.body?.college || '').trim();
     const college = String(req.body?.college || req.body?.year || '').trim();
-    const ollamaKey = String(req.body?.ollamaKey || '').trim();
     if (!/^[A-Za-z\s]{2,60}$/.test(name)) return res.status(400).json({ error: 'Enter valid name (2-60 letters).' });
     if (!/^[A-Za-z0-9\-_]{4,20}$/.test(registerNo)) return res.status(400).json({ error: 'Enter valid Register No / unique no (4-20 alphanumeric).' });
-    if (!ollamaKey || ollamaKey.length < 8) return res.status(400).json({ error: 'Ollama API key is required. Click GET KEY, copy your key from ollama.com → settings → keys, and paste it here.' });
     let p = Object.values(store.participants).find((x) => x.registerNo === registerNo);
     if (!p) {
       // Serverless load-through: another instance may own this user.
@@ -246,14 +277,16 @@ export function buildApp() {
     }
     if (!p) {
       const id = `p_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
-      p = { id, name, registerNo, year, college, ollamaKey, createdAt: new Date().toISOString(), round1Completed: false, round1Score: 0, round2Completed: false, round2Score: 0, totalScore: 0 };
+      p = { id, name, registerNo, year, college, createdAt: new Date().toISOString(), round1Completed: false, round1Score: 0, round2Completed: false, round2Score: 0, totalScore: 0 };
       store.participants[id] = p; persistParticipant(p); broadcast('players_updated', { count: Object.keys(store.participants).length });
     } else {
-      // Returning participant (e.g. after an interrupt): refresh their key so chats resume on it.
-      p.ollamaKey = ollamaKey;
-      if (year) p.year = year;
-      persistParticipant(p);
+      if (year) {
+        p.year = year;
+        void updateParticipantFieldsAtomic(p.id, { year });
+      }
     }
+    // Stable pooled key slot (round-robin); the raw key is never exposed.
+    await ensureKeySlot(p);
     // Participants only ever receive identity + progress flags — never scores.
     const { id, name: pname, registerNo: preg, college: pcollege, year: pyear, createdAt, round1Completed, round2Completed } = p;
     res.json({ participant: { id, name: pname, registerNo: preg, college: pcollege, year: pyear || pcollege, createdAt, round1Completed, round2Completed } });
@@ -262,13 +295,19 @@ export function buildApp() {
   // ---------- focus-lock violations (tab hidden / fullscreen exited mid-round) ----------
   app.post('/api/participant/violation', async (req, res) => {
     const { participantId, kind } = req.body || {};
+    if (kind !== 'tab' && kind !== 'fs') return res.status(400).json({ error: 'Unknown violation kind.' });
     const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Participant not found.' });
-    if (!p.violations) p.violations = { tabHidden: 0, fullscreenExit: 0 };
-    if (kind === 'tab') p.violations.tabHidden++;
-    else if (kind === 'fs') p.violations.fullscreenExit++;
-    else return res.status(400).json({ error: 'Unknown violation kind.' });
-    persistParticipant(p);
+    // ATOMIC FIX: Use $inc directly in MongoDB. Concurrent violation events will
+    // never overwrite scores or progress flags.
+    const updatedViolations = await recordViolationAtomic(p.id, kind);
+    if (updatedViolations) {
+      p.violations = updatedViolations;
+    } else {
+      if (!p.violations) p.violations = { tabHidden: 0, fullscreenExit: 0 };
+      if (kind === 'tab') p.violations.tabHidden++;
+      else if (kind === 'fs') p.violations.fullscreenExit++;
+    }
     res.json({ ok: true, violations: p.violations });
   });
 
@@ -279,6 +318,7 @@ export function buildApp() {
     const p = await ensureParticipantById(String(participantId));
     if (!p) return res.status(404).json({ error: 'Participant not found. Login again.' });
     if (p.round1Completed) return res.status(403).json({ error: 'Round 1 already completed. Round 2 is unlocked.' });
+    await ensureKeySlot(p);
     const existing = (await ensureLie(p.id)) && store.lieSessions[p.id];
     const liveVersion = (store.config as any).lieVersion || 1;
     if (existing && !existing.finished && (existing.cfgVersion || 1) === liveVersion) {
@@ -316,9 +356,10 @@ export function buildApp() {
     const turn = sess.promptsUsed + 1;
     const history = sess.messages.slice(0, -1);
     const truth = { label: store.config.truthLabel, keywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords };
-    // Participant's OWN Ollama key first, then Gemini, then local simulation.
-    // Engine is reported so the UI can flag degraded (local-opponent) mode.
-    const oKey = String((p as any).ollamaKey || '');
+    // Shared organizer key pool (stable slot per participant), then Gemini,
+    // then local simulation. Engine is reported so the UI can flag degraded
+    // (local-opponent) mode.
+    const oKey = keyForSlot(await ensureKeySlot(p));
     const lastAiText = [...history].reverse().find((m) => m.sender === 'ai')?.text;
     let r;
     let engine: 'ollama' | 'gemini' | 'simulation' = 'simulation';
@@ -363,13 +404,12 @@ export function buildApp() {
     const totalTokens = sess.messages.filter((m) => m.sender === 'user').reduce((a, m) => a + estimateTokens(m.text), 0);
     const timeSec = Math.round((Date.now() - sess.startedAt) / 1000);
     const truth = { label: store.config.truthLabel, keywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords };
-    // Conviction check (ANY non-truth accepted counts): participant's Ollama
+    // Conviction check (ANY non-truth accepted counts): pooled Ollama
     // referee first, then Gemini, then semantic fallback.
-    const oKey = String((p as any).ollamaKey || '');
+    const oKey = keyForSlot(await ensureKeySlot(p));
     let evaluations: any[] = [];
     try {
-      if (oKey) evaluations = await refereeLieOllama(sess.messages, oKey, defaultOllamaModel(), truth);
-      else throw new Error('no-key');
+      evaluations = await refereeLieOllama(sess.messages, oKey, defaultOllamaModel(), truth);
     } catch {
       const ev2 = await evaluateLieConversation(sess.messages, sess.belief, truth);
       evaluations = ev2.evaluations;
@@ -379,11 +419,32 @@ export function buildApp() {
     const finalBelief = convinced ? String(passed[0].answer || '') : truth.label;
     // Tribunal score: efficiency ONLY (prompts + time + tokens).
     const eff = scoreLieEfficiency(sess.promptsUsed, timeSec, totalTokens, convinced, finalBelief);
-    p.round1Completed = true; p.round1Score = eff.finalScore;
-    p.round1Evals = [{ ...eff, evaluations }];
-    p.round1PromptsUsed = sess.promptsUsed;
-    p.totalScore = finalScoreOutOf100(p.round1Score, p.round2Score);
-    sess.finished = true; persistParticipant(p); persistLieSession(sess);
+
+    // Refresh latest participant state from DB before computing totalScore to preserve
+    // any concurrent round2 score.
+    const latestP = (await loadParticipantDoc(p.id)) || p;
+    const computedTotal = finalScoreOutOf100(eff.finalScore, latestP.round2Score);
+
+    // ATOMIC FIX: Atomically $set Round 1 fields in MongoDB so no concurrent request can overwrite them.
+    const updated = await updateParticipantRound1Atomic(p.id, {
+      round1Score: eff.finalScore,
+      round1Evals: [{ ...eff, evaluations }],
+      round1PromptsUsed: sess.promptsUsed,
+      totalScore: computedTotal,
+    });
+
+    if (updated) {
+      store.participants[p.id] = updated;
+    } else {
+      p.round1Completed = true;
+      p.round1Score = eff.finalScore;
+      p.round1Evals = [{ ...eff, evaluations }];
+      p.round1PromptsUsed = sess.promptsUsed;
+      p.totalScore = computedTotal;
+    }
+
+    sess.finished = true;
+    persistLieSession(sess);
     broadcast('leaderboard_updated', { leaderboard: leaderboard() });
     broadcast('players_updated', { count: Object.keys(store.participants).length });
     // Scores stay server-side only — the client just learns Round 2 is unlocked.
@@ -394,10 +455,13 @@ export function buildApp() {
   app.post('/api/detective/start', async (req, res) => {
     await refreshConfig();
     const { participantId } = req.body || {};
-    const p = await ensureParticipantById(String(participantId));
+    // ATOMIC CHECK: Read directly from DB to verify genuine round1Completed flag
+    const freshDoc = await loadParticipantDoc(String(participantId));
+    const p = freshDoc || (await ensureParticipantById(String(participantId)));
     if (!p) return res.status(404).json({ error: 'Login again.' });
     if (!p.round1Completed) return res.status(403).json({ error: 'Complete Round 1 (AI-Lying) first to unlock Round 2.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 already completed.' });
+    await ensureKeySlot(p);
     const casePayload = publicCase();
     const liveStory = (store.config as any).activeStoryId || DEFAULT_STORY_ID;
     const existing = await ensureDet(p.id);
@@ -439,7 +503,7 @@ export function buildApp() {
     if (!s.suspectsQ.includes(String(suspectId))) s.suspectsQ.push(String(suspectId));
     s.qCounts[String(suspectId)] = (s.qCounts[String(suspectId)] || 0) + 1;
     s.chats[String(suspectId)].push({ id: `u${Date.now()}`, sender: 'user', text: q, timestamp: now });
-    const oKey = String((p as any).ollamaKey || '');
+    const oKey = keyForSlot(await ensureKeySlot(p));
     const lang = 'english';
     const prevAi = [...(s.chats[String(suspectId)] || [])].reverse().find((m) => m.sender === 'ai')?.text;
     const qCount = s.qCounts[String(suspectId)];
@@ -483,10 +547,31 @@ export function buildApp() {
       cluesFound: s.cluesFound, suspectsQuestioned: s.suspectsQ.length, questionsAsked,
       notes: s.notes || '', timeTakenSec: timeSec, durationSec: store.config.round2DurationSec, caseCfg: store.config.caseConfig,
     });
-    p.round2Completed = true; p.round2Score = result.total; p.round2Accuracy = result.accuracy; p.round2Clues = [...s.cluesFound];
-    p.totalScore = finalScoreOutOf100(p.round1Score, p.round2Score);
-    p.finishedAt = new Date().toISOString();
-    persistParticipant(p); persistDetSession(s);
+    // Fresh read from DB so latest round1Score is preserved accurately
+    const freshDoc = await loadParticipantDoc(p.id);
+    const currentR1Score = freshDoc?.round1Score ?? p.round1Score;
+    const computedTotal = finalScoreOutOf100(currentR1Score, result.total);
+    const finishedAt = new Date().toISOString();
+
+    // ATOMIC FIX: Atomically $set Round 2 fields in MongoDB
+    const updated = await updateParticipantRound2Atomic(p.id, {
+      round2Score: result.total,
+      round2Accuracy: result.accuracy,
+      round2Clues: [...s.cluesFound],
+      totalScore: computedTotal,
+      finishedAt,
+    });
+    if (updated) {
+      store.participants[p.id] = updated;
+    } else {
+      p.round2Completed = true;
+      p.round2Score = result.total;
+      p.round2Accuracy = result.accuracy;
+      p.round2Clues = [...s.cluesFound];
+      p.totalScore = computedTotal;
+      p.finishedAt = finishedAt;
+    }
+    persistDetSession(s);
     broadcast('leaderboard_updated', { leaderboard: leaderboard() });
     // Scores stay server-side only — the client just gets the thank-you note.
     res.json({ thankYou: 'Thank you for participating! Wait for the final result.' });
@@ -556,6 +641,88 @@ export function buildApp() {
     res.json({ participants: slice, total, page: safePage, totalPages, limit, leaderboard: leaderboard() });
   });
 
+  // Dedicated one-off score recovery endpoint: re-evaluates saved Round 1 chats
+  // for any participant whose score was lost/overwritten to 0.
+  app.all('/api/admin/recover-round1-scores', requireAdmin, async (_req, res) => {
+    await hydrateStore();
+    const truth = {
+      label: store.config.truthLabel,
+      keywords: store.config.truthKeywords,
+      falseLabel: store.config.falseLabel,
+      falseKeywords: store.config.falseKeywords,
+    };
+    const recovered: any[] = [];
+    const inspected: any[] = [];
+
+    for (const p of Object.values(store.participants)) {
+      if (p.round1Score === 0) {
+        const sess = (await ensureLie(p.id)) || (await loadLieDoc(p.id));
+        if (sess && sess.messages && sess.messages.length >= 2) {
+          let timeSec = 0;
+          const t0 = new Date(sess.messages[0].timestamp).getTime();
+          const t1 = new Date(sess.messages[sess.messages.length - 1].timestamp).getTime();
+          if (!isNaN(t0) && !isNaN(t1) && t1 >= t0) {
+            timeSec = Math.round((t1 - t0) / 1000);
+          }
+          if (!timeSec && sess.startedAt) {
+            timeSec = Math.min(900, Math.max(30, Math.round((Date.now() - sess.startedAt) / 1000)));
+          }
+          timeSec = Math.min(900, Math.max(30, timeSec));
+
+          const totalTokens = sess.messages
+            .filter((m: any) => m.sender === 'user')
+            .reduce((a: number, m: any) => a + estimateTokens(m.text), 0);
+
+          const ev = await evaluateLieConversation(sess.messages, sess.belief, truth);
+          const passed = ev.evaluations.filter((e: any) => e.passed || e.isSuccess);
+          const convinced = passed.length > 0;
+          const finalBelief = convinced ? String(passed[0].answer || '') : truth.label;
+          const eff = scoreLieEfficiency(
+            sess.promptsUsed || sess.messages.filter((m: any) => m.sender === 'user').length,
+            timeSec,
+            totalTokens,
+            convinced,
+            finalBelief
+          );
+
+          inspected.push({
+            name: p.name,
+            registerNo: p.registerNo,
+            convinced,
+            finalScore: eff.finalScore,
+            prompts: sess.promptsUsed,
+          });
+
+          if (convinced && eff.finalScore > 0) {
+            const computedTotal = finalScoreOutOf100(eff.finalScore, p.round2Score);
+            const updated = await updateParticipantRound1Atomic(p.id, {
+              round1Score: eff.finalScore,
+              round1Evals: [{ ...eff, evaluations: ev.evaluations }],
+              round1PromptsUsed: sess.promptsUsed || sess.messages.filter((m: any) => m.sender === 'user').length,
+              totalScore: computedTotal,
+            });
+            if (updated) {
+              store.participants[p.id] = updated;
+            } else {
+              p.round1Completed = true;
+              p.round1Score = eff.finalScore;
+              p.totalScore = computedTotal;
+            }
+            recovered.push({
+              name: p.name,
+              registerNo: p.registerNo,
+              recoveredRound1Score: eff.finalScore,
+              newTotalScore: computedTotal,
+              round2Score: p.round2Score,
+            });
+          }
+        }
+      }
+    }
+    broadcast('leaderboard_updated', { leaderboard: leaderboard() });
+    res.json({ ok: true, recoveredCount: recovered.length, recovered, inspected });
+  });
+
   // Read-only history for participants (works even after both rounds are sealed).
   app.get('/api/participant/history', async (req, res) => {
     await refreshConfig();
@@ -574,7 +741,10 @@ export function buildApp() {
   });
   app.get('/api/admin/config', requireAdmin, async (_req, res) => {
     await refreshConfig();
-    res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords, round2DurationSec: store.config.round2DurationSec, caseConfig: store.config.caseConfig, activeStoryId: (store.config as any).activeStoryId || DEFAULT_STORY_ID, lieVersion: (store.config as any).lieVersion || 1, stories: storyMeta() });
+    // Pool usage (counts only — raw keys never leave the server).
+    const slots = new Set(Object.values(store.participants).map((x) => Number((x as any).keySlot)).filter((n) => Number.isInteger(n) && n >= 0));
+    const keyPool = { total: KEY_POOL_SIZE, assigned: slots.size };
+    res.json({ eventName: store.config.eventName, lieImageUrl: store.config.lieImageUrl, truthLabel: store.config.truthLabel, truthKeywords: store.config.truthKeywords, falseLabel: store.config.falseLabel, falseKeywords: store.config.falseKeywords, round2DurationSec: store.config.round2DurationSec, caseConfig: store.config.caseConfig, activeStoryId: (store.config as any).activeStoryId || DEFAULT_STORY_ID, lieVersion: (store.config as any).lieVersion || 1, stories: storyMeta(), keyPool });
   });
   app.post('/api/admin/config/lie-image', requireAdmin, async (req, res) => {
     const url = String(req.body?.imageUrl || '').trim();

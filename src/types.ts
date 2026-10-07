@@ -4,7 +4,8 @@ export interface Participant {
   registerNo: string;
   year?: string;
   college?: string;
-  ollamaKey?: string; // participant's own Ollama Cloud API key (server-side only, never sent to clients)
+  ollamaKey?: string; // legacy per-participant key (unused since shared pool; kept for old rows)
+  keySlot?: number; // index into the server-side shared Ollama key pool (stable per participant)
   createdAt: string;
   round1Completed: boolean;
   round1Score: number; // 0..500 (raw, same eval as ai-lie repo)

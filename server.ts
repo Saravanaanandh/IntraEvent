@@ -8,6 +8,7 @@ import { buildApp, hydrateStore } from './src/server/app.js';
 import { connectMongo, isMongoUp } from './src/server/db.js';
 
 dotenv.config();
+// Server entry with atomic MongoDB operations
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

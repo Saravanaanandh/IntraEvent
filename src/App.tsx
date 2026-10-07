@@ -135,7 +135,11 @@ export default function App() {
             onFinish={(p) => {
               soundFX.playSuccess();
               setParticipant(p);
-              setView('lieresult');
+              if (p.round2Completed) {
+                setView('thankyou');
+              } else {
+                setView('lieresult');
+              }
             }}
             onExit={() => setView('home')}
           />
@@ -151,19 +155,23 @@ export default function App() {
                 ROUND 1 COMPLETE
               </h2>
               <p className="text-xs text-[#8e9cb5] mt-2 font-mono leading-relaxed">
-                Your persuasion run has been recorded and sealed. Round 2 — The Hidden Mystery (1
-                Hour) — is now unlocked.
+                Your persuasion run has been recorded and sealed.{' '}
+                {participant.round2Completed
+                  ? 'Both rounds are complete.'
+                  : 'You can now proceed to Round 2 — The Hidden Mystery (1 Hour).'}
               </p>
-              <button
-                onClick={() => {
-                  soundFX.playClick();
-                  void enterFullscreen();
-                  setView('detective');
-                }}
-                className="mt-5 w-full px-6 py-3.5 rounded-2xl font-mono font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-400 text-[#041017] hover:brightness-110 cursor-pointer transition-all shadow-xl"
-              >
-                OPEN ROUND 2 (1 HOUR) →
-              </button>
+              {!participant.round2Completed && (
+                <button
+                  onClick={() => {
+                    soundFX.playClick();
+                    void enterFullscreen();
+                    setView('detective');
+                  }}
+                  className="mt-5 w-full px-6 py-3.5 rounded-2xl font-mono font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-400 text-[#041017] hover:brightness-110 cursor-pointer transition-all shadow-xl"
+                >
+                  OPEN ROUND 2 (1 HOUR) →
+                </button>
+              )}
               <button
                 onClick={() => setView('home')}
                 className="mt-2 w-full px-6 py-3 rounded-2xl font-mono text-xs bg-[#10192e] hover:bg-[#182645] border border-cyan-500/30 text-cyan-200 cursor-pointer transition-all"
@@ -181,7 +189,11 @@ export default function App() {
             onDone={(p) => {
               soundFX.playSuccess();
               setParticipant(p);
-              setView('thankyou');
+              if (p.round1Completed) {
+                setView('thankyou');
+              } else {
+                setView('home');
+              }
             }}
             onExit={() => setView('home')}
           />
@@ -217,7 +229,7 @@ export default function App() {
                 <div className="mt-3 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-400/30 text-[11px] text-amber-200 font-mono flex items-center gap-2 text-left">
                   <ShieldCheck className="w-4 h-4 shrink-0 text-amber-300" />
                   <span>
-                    Clicking <b>BACK</b> clears your stored session cookies and API key to prevent any other participant from using your credentials.
+                    Clicking <b>BACK</b> clears your stored session so no other participant can resume as you on this machine.
                   </span>
                 </div>
 

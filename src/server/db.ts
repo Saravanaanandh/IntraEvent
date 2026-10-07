@@ -75,6 +75,129 @@ async function upsert(model: mongoose.Model<any>, pid: string, data: any) {
   }
 }
 
+/**
+ * RACE CONDITION FIX:
+ * Previously, all updates wrote the full in-memory participant object via
+ * findOneAndUpdate({ pid }, { pid, data: p }).
+ * When multiple requests arrived close together (e.g. participant finishes Round 1
+ * while focus-lock violation events or Round 2 requests fire), a concurrent request
+ * reading a stale participant copy would overwrite newly-saved Round 1 scores back to 0.
+ *
+ * THE FIX:
+ * Atomic findOneAndUpdate operations using targeted `$set` and `$inc`.
+ * Each write modifies ONLY its specific fields in MongoDB, never replacing
+ * the full document.
+ */
+
+// Atomic field updater for participant documents
+export async function updateParticipantAtomic(pid: string, updateQuery: mongoose.UpdateQuery<any>): Promise<Participant | null> {
+  if (!connected) return null;
+  try {
+    const d = await ParticipantDoc.findOneAndUpdate(
+      { pid },
+      updateQuery,
+      { new: true }
+    ).lean().exec();
+    return ((d as any)?.data as Participant) ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] atomic update failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
+// Atomically record tab / fullscreen violations using $inc so concurrent
+// violation events never overwrite scores or progress.
+export async function recordViolationAtomic(pid: string, kind: 'tab' | 'fs'): Promise<{ tabHidden: number; fullscreenExit: number } | null> {
+  if (!connected) return null;
+  const field = kind === 'tab' ? 'data.violations.tabHidden' : 'data.violations.fullscreenExit';
+  try {
+    const d = await ParticipantDoc.findOneAndUpdate(
+      { pid },
+      { $inc: { [field]: 1 } },
+      { new: true }
+    ).lean().exec();
+    return (d as any)?.data?.violations ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] violation $inc failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
+// Atomically save Round 1 score and completion flag.
+export async function updateParticipantRound1Atomic(
+  pid: string,
+  scoreData: { round1Score: number; round1Evals: any[]; round1PromptsUsed: number; totalScore: number }
+): Promise<Participant | null> {
+  if (!connected) return null;
+  try {
+    const d = await ParticipantDoc.findOneAndUpdate(
+      { pid },
+      {
+        $set: {
+          'data.round1Completed': true,
+          'data.round1Score': scoreData.round1Score,
+          'data.round1Evals': scoreData.round1Evals,
+          'data.round1PromptsUsed': scoreData.round1PromptsUsed,
+          'data.totalScore': scoreData.totalScore,
+        },
+      },
+      { new: true }
+    ).lean().exec();
+    return ((d as any)?.data as Participant) ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] round1 atomic update failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
+// Atomically save Round 2 score and completion flag.
+export async function updateParticipantRound2Atomic(
+  pid: string,
+  scoreData: { round2Score: number; round2Accuracy: number; round2Clues: string[]; totalScore: number; finishedAt: string }
+): Promise<Participant | null> {
+  if (!connected) return null;
+  try {
+    const d = await ParticipantDoc.findOneAndUpdate(
+      { pid },
+      {
+        $set: {
+          'data.round2Completed': true,
+          'data.round2Score': scoreData.round2Score,
+          'data.round2Accuracy': scoreData.round2Accuracy,
+          'data.round2Clues': scoreData.round2Clues,
+          'data.totalScore': scoreData.totalScore,
+          'data.finishedAt': scoreData.finishedAt,
+        },
+      },
+      { new: true }
+    ).lean().exec();
+    return ((d as any)?.data as Participant) ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] round2 atomic update failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
+// Atomically update specific scalar fields (e.g. year, keySlot)
+export async function updateParticipantFieldsAtomic(pid: string, fields: Partial<Participant>): Promise<Participant | null> {
+  if (!connected) return null;
+  const setFields: Record<string, any> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    setFields[`data.${k}`] = v;
+  }
+  try {
+    const d = await ParticipantDoc.findOneAndUpdate(
+      { pid },
+      { $set: setFields },
+      { new: true }
+    ).lean().exec();
+    return ((d as any)?.data as Participant) ?? null;
+  } catch (e: any) {
+    console.warn(`[mongo] fields atomic update failed for ${pid}:`, String(e?.message || e).slice(0, 150));
+    return null;
+  }
+}
+
 // Fire-and-forget write-through helpers (safe to call without await).
 export function persistParticipant(p: Participant) {
   void upsert(ParticipantDoc, p.id, p);
@@ -90,6 +213,9 @@ export function persistConfig(cfg: any) {
   // landed before any subsequent refreshConfig() re-read can observe it.
   return upsert(ConfigDoc, 'global', cfg);
 }
+
+// Export Mongoose models for direct administrative queries
+export { ParticipantDoc, LieSessionDoc, DetSessionDoc, ConfigDoc };
 
 export async function wipeMongo() {
   if (!connected) return;
@@ -171,5 +297,33 @@ export async function loadConfigDoc(): Promise<any | null> {
     return (d as any)?.data ?? null;
   } catch {
     return null;
+  }
+}
+
+const counterSchema = new mongoose.Schema(
+  {
+    pid: { type: String, required: true, unique: true },
+    seq: { type: Number, default: 0 },
+  },
+  { timestamps: true }
+);
+const CounterDoc = mongoose.models.FECounter || mongoose.model('FECounter', counterSchema);
+
+// Round-robin slot allocator for the shared Ollama key pool. Atomic
+// findOneAndUpdate so concurrent logins on serverless instances each take
+// the next slot. Falls back to random on any failure.
+export async function nextKeySlot(poolSize: number): Promise<number> {
+  const size = Math.max(1, Math.floor(poolSize || 1));
+  try {
+    if (!connected) throw new Error('offline');
+    const d = await CounterDoc.findOneAndUpdate(
+      { pid: 'keyslot' },
+      { $inc: { seq: 1 } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    ).lean().exec();
+    const seq = Number((d as any)?.seq ?? 1);
+    return ((seq - 1) % size + size) % size;
+  } catch {
+    return Math.floor(Math.random() * size);
   }
 }
