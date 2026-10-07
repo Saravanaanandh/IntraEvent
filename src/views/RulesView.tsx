@@ -51,7 +51,7 @@ export default function RulesView({ onBack }: { onBack: () => void }) {
       <div className="mt-4 p-5 rounded-3xl panel-tribunal flex items-start gap-3">
         <ShieldAlert className="w-5 h-5 text-rose-300 shrink-0 mt-0.5" />
         <p className="text-xs font-mono text-[#8f86ad] leading-relaxed">
-          FAIR PLAY — one account per Register No. Round 2 stays locked until Round 1 is sealed.
+          FAIR PLAY — one account per Register No. Both rounds are open — play them in any order.
           After the charge-sheet is filed your session is cleared. The admin's image / story controls apply to sessions started after the change.
         </p>
       </div>

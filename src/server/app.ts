@@ -628,7 +628,7 @@ export function buildApp() {
     let p = freshDoc || (await ensureParticipantById(String(participantId)));
     if (!p) return res.status(404).json({ error: 'Login again.' });
     p = await healRound1(p);
-    if (!p.round1Completed) return res.status(403).json({ error: 'Complete Round 1 (AI-Lying) first to unlock Round 2.' });
+    // Round 2 is open independently of Round 1 — no round1Completed gate.
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 already completed.' });
     await ensureKeySlot(p);
     const casePayload = publicCase();

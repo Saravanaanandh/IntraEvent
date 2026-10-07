@@ -11,6 +11,8 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
 }) {
   const r1 = participant.round1Completed;
   const r2 = participant.round2Completed;
+  // Round 2 is open independently of Round 1.
+  const r2Open = true;
   return (
     <div className="w-full h-screen max-h-screen overflow-hidden flex flex-col justify-center items-center px-4 bg-[#060813] select-none">
       <div className="w-full max-w-3xl animate-fadeIn">
@@ -23,7 +25,7 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
             PROMPT THEORY
           </h2>
           <p className="font-mono text-xs sm:text-sm text-cyan-300/70 mt-1">
-            Complete Round 1 (15m) to unlock Round 2 (1h).
+            Round 1 (15m) and Round 2 (1h) are both open.
           </p>
         </div>
 
@@ -48,14 +50,14 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
           </div>
 
           {/* ROUND 2 — Deduction */}
-          <div className={`p-6 rounded-3xl bg-[#091122]/90 shadow-xl backdrop-blur-md transition-all ${!r1 ? 'opacity-70 border border-[#1e293b]' : r2 ? 'border border-emerald-400/40 glow-live' : 'border border-cyan-400/40 glow-live'}`}>
+          <div className={`p-6 rounded-3xl bg-[#091122]/90 shadow-xl backdrop-blur-md transition-all ${!r2Open ? 'opacity-70 border border-[#1e293b]' : r2 ? 'border border-emerald-400/40 glow-live' : 'border border-cyan-400/40 glow-live'}`}>
             <div className="flex items-center justify-between">
               <span className="font-mono text-[11px] uppercase tracking-widest text-emerald-300 flex items-center gap-1.5 font-bold">
                 <Search className="w-4 h-4 text-emerald-400" /> Round 2 · 1 Hour
               </span>
               {r2
                 ? <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> SEALED</span>
-                : !r1
+                : !r2Open
                   ? <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-[#040814] border border-[#334155] text-[#64748b] flex items-center gap-1"><Lock className="w-3 h-3" /> LOCKED</span>
                   : <span className="font-mono text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200">● UNLOCKED</span>}
             </div>
@@ -63,8 +65,8 @@ export default function Home({ participant, onStartLie, onStartDetective, onRule
             <p className="text-xs text-[#8f9eb5] mt-1 font-mono leading-relaxed">
               Question 4 suspects, discover indirect clues, submit your final answer. 1 hour time limit.
             </p>
-            <button onClick={() => { soundFX.playClick(); onStartDetective(); }} disabled={!r1} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm cursor-pointer transition-all ${!r1 ? 'bg-[#10192e] text-[#64748b] cursor-not-allowed' : r2 ? 'bg-[#10192e] text-cyan-200 hover:bg-[#182645]' : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-[#041017] hover:brightness-110'}`}>
-              {!r1 ? 'LOCKED - FINISH ROUND 1 FIRST' : r2 ? 'VIEW ROUND 2' : 'OPEN CASE FILE'}
+            <button onClick={() => { soundFX.playClick(); onStartDetective(); }} disabled={!r2Open} className={`mt-4 w-full px-6 py-3 rounded-xl font-mono font-bold text-sm cursor-pointer transition-all ${!r2Open ? 'bg-[#10192e] text-[#64748b] cursor-not-allowed' : r2 ? 'bg-[#10192e] text-cyan-200 hover:bg-[#182645]' : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-[#041017] hover:brightness-110'}`}>
+              {!r2Open ? 'LOCKED - FINISH ROUND 1 FIRST' : r2 ? 'VIEW ROUND 2' : 'OPEN CASE FILE'}
             </button>
           </div>
         </div>
