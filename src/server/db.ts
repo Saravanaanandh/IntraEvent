@@ -432,6 +432,22 @@ export async function saveLieSessionDoc(sess: any): Promise<boolean> {
   }
 }
 
+/**
+ * Fully awaited full-document upsert for a participant. On Vercel a
+ * fire-and-forget write can be frozen before it lands, leaving no doc for
+ * later atomic $set updates (round1Completed would then be silently lost).
+ */
+export async function saveParticipantDoc(p: Participant): Promise<boolean> {
+  if (!await ensureConnected()) return false;
+  try {
+    await ParticipantDoc.findOneAndUpdate({ pid: p.id }, { pid: p.id, data: p }, { upsert: true }).exec();
+    return true;
+  } catch (e: any) {
+    console.warn(`[mongo] saveParticipantDoc failed for ${p.id}:`, String(e?.message || e).slice(0, 150));
+    return false;
+  }
+}
+
 // Fire-and-forget write-through helpers (safe to call without await).
 export function persistParticipant(p: Participant) {
   void upsert(ParticipantDoc, p.id, p);

@@ -31,6 +31,7 @@ import {
   releaseLieFinishLock,
   markLieSessionFinishedAtomic,
   saveLieSessionDoc,
+  saveParticipantDoc,
   ParticipantDoc,
   LieSessionDoc,
 } from './db.js';
@@ -223,6 +224,24 @@ async function ensureParticipantById(id: string): Promise<Participant | undefine
   return store.participants[key];
 }
 
+// Self-heal: if the Round 1 chat session is sealed but the participant flag
+// never landed in Mongo (lost serverless write), restore round1Completed so
+// Round 2 unlocks. Upserts the full doc if it is missing entirely.
+async function healRound1(p: Participant): Promise<Participant> {
+  if (p.round1Completed) return p;
+  const lie = await loadLieDoc(p.id);
+  if (!lie?.finished) return p;
+  const updated = await updateParticipantFieldsAtomic(p.id, { round1Completed: true });
+  if (updated) {
+    store.participants[p.id] = updated;
+    return updated;
+  }
+  p.round1Completed = true;
+  store.participants[p.id] = p;
+  await saveParticipantDoc(p);
+  return p;
+}
+
 // DB-first load: MongoDB is the single source of truth across serverless instances.
 async function ensureLie(pid: string): Promise<LieSession | null> {
   const doc = await loadLieDoc(pid);
@@ -312,12 +331,16 @@ export function buildApp() {
     if (!p) {
       const id = `p_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
       p = { id, name, registerNo, year, college, createdAt: new Date().toISOString(), round1Completed: false, round1Score: 0, round2Completed: false, round2Score: 0, totalScore: 0 };
-      store.participants[id] = p; persistParticipant(p); broadcast('players_updated', { count: Object.keys(store.participants).length });
+      // Awaited: on Vercel a fire-and-forget write may never land.
+      store.participants[id] = p; await saveParticipantDoc(p); broadcast('players_updated', { count: Object.keys(store.participants).length });
     } else {
       if (year) {
         p.year = year;
-        void updateParticipantFieldsAtomic(p.id, { year });
+        const updated = await updateParticipantFieldsAtomic(p.id, { year });
+        // Doc missing in Mongo (lost earlier write) — recreate it.
+        if (!updated) await saveParticipantDoc(p);
       }
+      p = await healRound1(p);
     }
     // Stable pooled key slot (round-robin); the raw key is never exposed.
     await ensureKeySlot(p);
@@ -505,6 +528,7 @@ export function buildApp() {
     const lock = await acquireLieFinishLock(pid);
     if (!lock.locked) {
       if (lock.reason === 'ALREADY_FINISHED') {
+        await healRound1(p);
         return res.json({ round2Unlocked: true, alreadyFinished: true });
       }
       if (lock.reason === 'LOCKED') {
@@ -567,6 +591,10 @@ export function buildApp() {
         p.round1Evals = [{ ...eff, evaluations }];
         p.round1PromptsUsed = sess.promptsUsed;
         p.totalScore = computedTotal;
+        store.participants[p.id] = p;
+        // Participant doc was missing in Mongo — write the full doc (awaited)
+        // so round1Completed survives across serverless instances.
+        await saveParticipantDoc(p);
       }
 
       // Mark finished atomically in Mongo
@@ -597,8 +625,9 @@ export function buildApp() {
     const { participantId } = req.body || {};
     // ATOMIC CHECK: Read directly from DB to verify genuine round1Completed flag
     const freshDoc = await loadParticipantDoc(String(participantId));
-    const p = freshDoc || (await ensureParticipantById(String(participantId)));
+    let p = freshDoc || (await ensureParticipantById(String(participantId)));
     if (!p) return res.status(404).json({ error: 'Login again.' });
+    p = await healRound1(p);
     if (!p.round1Completed) return res.status(403).json({ error: 'Complete Round 1 (AI-Lying) first to unlock Round 2.' });
     if (p.round2Completed) return res.status(403).json({ error: 'Round 2 already completed.' });
     await ensureKeySlot(p);
@@ -710,6 +739,8 @@ export function buildApp() {
       p.round2Clues = [...s.cluesFound];
       p.totalScore = computedTotal;
       p.finishedAt = finishedAt;
+      store.participants[p.id] = p;
+      await saveParticipantDoc(p);
     }
     persistDetSession(s);
     broadcast('leaderboard_updated', { leaderboard: leaderboard() });
